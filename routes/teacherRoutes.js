@@ -2,54 +2,47 @@ const express = require('express');
 const router = express.Router();
 const Teacher = require('../models/Teacher');
 const auth = require('../middleware/authMiddleware');
-const multer = require('multer'); // Import Multer
+const multer = require('multer');
 const path = require('path');
+const fs = require('fs'); // Added to help delete old files if needed
 
 // ----------------------------------------------------------------
 // 1. CONFIGURE FILE STORAGE
 // ----------------------------------------------------------------
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, 'uploads/'); // Files will be saved in the 'uploads' folder
+    cb(null, 'uploads/');
   },
   filename: (req, file, cb) => {
-    // Save as: timestamp-filename.extension (e.g., 16400000-photo.jpg)
+    // timestamp-filename.extension
     cb(null, Date.now() + '-' + file.originalname);
   }
 });
 
-// Initialize Upload Middleware
 const upload = multer({ storage: storage });
 
 // ----------------------------------------------------------------
-// 2. UPDATED POST ROUTE (Now accepts Files + Text)
+// 2. POST: ADD TEACHER
 // ----------------------------------------------------------------
-// We use upload.fields to accept specific file inputs: 'photo' and 'resume'
 router.post('/', auth, upload.fields([
   { name: 'photo', maxCount: 1 }, 
   { name: 'resume', maxCount: 1 },
   { name: 'idProof', maxCount: 1 }
 ]), async (req, res) => {
     try {
-        // When using Multer:
-        // - Text data is in req.body
-        // - Files are in req.files
-        
-        console.log("Body Received:", req.body);
-        console.log("Files Received:", req.files);
-
-        // Create the data object to save
+        // Use spread operator to get text fields (fullName, email, etc.)
         const teacherData = { ...req.body };
 
-        // Add file paths to the data if files were uploaded
+        // Map the uploaded files to the database fields
+        // Note: We save them as 'photoUrl' to match the Frontend code
         if (req.files['photo']) {
-            teacherData.photo = req.files['photo'][0].path;
+            teacherData.photoUrl = req.files['photo'][0].path;
         }
         if (req.files['resume']) {
-            teacherData.resume = req.files['resume'][0].path;
+            teacherData.resumeUrl = req.files['resume'][0].path;
         }
         if (req.files['idProof']) {
-            teacherData.idProof = req.files['idProof'][0].path;
+            teacherData.idProofUrl = req.files['idProof'][0].path;
         }
 
         const newTeacher = new Teacher(teacherData);
@@ -59,20 +52,76 @@ router.post('/', auth, upload.fields([
 
     } catch (err) {
         console.error("Backend Error:", err.message);
-        res.status(400).json({ 
-            message: "Validation Failed", 
-            details: err.errors 
-        });
+        res.status(400).json({ message: "Validation Failed", details: err.errors });
     }
 });
 
-// @route   GET /api/teachers
+// ----------------------------------------------------------------
+// 3. GET: LIST TEACHERS
+// ----------------------------------------------------------------
 router.get('/', auth, async (req, res) => {
     try {
         const teachers = await Teacher.find().sort({ createdAt: -1 });
         res.json(teachers);
     } catch (err) {
         res.status(500).json({ message: "Server Error" });
+    }
+});
+
+// ----------------------------------------------------------------
+// 4. PUT: UPDATE TEACHER (Fixes "Edit Option Not Working")
+// ----------------------------------------------------------------
+router.put('/:id', auth, upload.fields([
+  { name: 'photo', maxCount: 1 }, 
+  { name: 'resume', maxCount: 1 },
+  { name: 'idProof', maxCount: 1 }
+]), async (req, res) => {
+    try {
+        const { id } = req.params;
+        const updates = { ...req.body };
+
+        // Check if new files were uploaded and update paths accordingly
+        if (req.files['photo']) {
+            updates.photoUrl = req.files['photo'][0].path;
+        }
+        if (req.files['resume']) {
+            updates.resumeUrl = req.files['resume'][0].path;
+        }
+        if (req.files['idProof']) {
+            updates.idProofUrl = req.files['idProof'][0].path;
+        }
+
+        // Find by ID and Update
+        const updatedTeacher = await Teacher.findByIdAndUpdate(id, updates, { new: true });
+
+        if (!updatedTeacher) {
+            return res.status(404).json({ message: "Teacher not found" });
+        }
+
+        res.json(updatedTeacher);
+
+    } catch (err) {
+        console.error("Update Error:", err);
+        res.status(500).json({ message: "Error updating teacher" });
+    }
+});
+
+// ----------------------------------------------------------------
+// 5. DELETE: REMOVE TEACHER (Adds "Delete Option")
+// ----------------------------------------------------------------
+router.delete('/:id', auth, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const deletedTeacher = await Teacher.findByIdAndDelete(id);
+
+        if (!deletedTeacher) {
+            return res.status(404).json({ message: "Teacher not found" });
+        }
+
+        res.json({ message: "Teacher deleted successfully" });
+    } catch (err) {
+        console.error("Delete Error:", err);
+        res.status(500).json({ message: "Error deleting teacher" });
     }
 });
 

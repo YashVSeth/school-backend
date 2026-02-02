@@ -22,6 +22,9 @@ app.use("/api/classes", require("./routes/classRoutes"));
 app.use("/api/students", require("./routes/studentRoutes"));
 app.use("/api/teachers", require("./routes/teacherRoutes"));
 app.use("/api/admin", require("./routes/adminRoutes"));
+app.use('/api/subjects', require('./routes/subjectRoutes'));
+// Make the uploads folder public
+app.use('/uploads', express.static('uploads'));
 // 5. Test Route
 app.get("/", (req, res) => {
   res.send("School Management System API is Running...");
