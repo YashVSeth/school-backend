@@ -24,4 +24,36 @@ const getClasses = async (req, res) => {
   }
 };
 
-module.exports = { addClass, getClasses };
+const updateFeeStructure = async (req, res) => {
+  try {
+    const { classId, monthlyFee, yearlyFee, description } = req.body;
+
+    // Find the class and update specific fields
+    const updatedClass = await Class.findByIdAndUpdate(
+      classId,
+      {
+        feeStructure: {
+          monthlyFee: Number(monthlyFee),
+          yearlyFee: Number(yearlyFee),
+          description
+        }
+      },
+      { new: true } // Return the updated document
+    );
+
+    if (!updatedClass) {
+      return res.status(404).json({ message: "Class not found" });
+    }
+
+    res.status(200).json({ message: "Fee structure updated!", data: updatedClass });
+  } catch (error) {
+    res.status(500).json({ message: "Server Error", error: error.message });
+  }
+};
+
+// ✅ CORRECT EXPORT (All in one object)
+module.exports = { 
+    addClass, 
+    getClasses, 
+    updateFeeStructure 
+};

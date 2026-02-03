@@ -3,6 +3,8 @@ const express = require("express");
 const dotenv = require("dotenv");
 const cors = require("cors");
 const connectDB = require("./config/db");
+const teacherAttendanceRoutes = require('./routes/teacherAttendanceRoutes');
+const feeRoutes = require('./routes/feeRoutes');
 
 // 1. Load Config
 dotenv.config();
@@ -15,6 +17,7 @@ const app = express();
 // 3. Middleware
 app.use(cors());
 app.use(express.json()); // Allows backend to understand JSON
+app.use('/api/fees', feeRoutes);
 
 // 4. Routes
 app.use("/api/auth", require("./routes/authRoutes"));
@@ -23,6 +26,7 @@ app.use("/api/students", require("./routes/studentRoutes"));
 app.use("/api/teachers", require("./routes/teacherRoutes"));
 app.use("/api/admin", require("./routes/adminRoutes"));
 app.use('/api/subjects', require('./routes/subjectRoutes'));
+app.use('/api/attendance', teacherAttendanceRoutes);
 // Make the uploads folder public
 app.use('/uploads', express.static('uploads'));
 // 5. Test Route
