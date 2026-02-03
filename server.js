@@ -5,6 +5,7 @@ const cors = require("cors");
 const connectDB = require("./config/db");
 const teacherAttendanceRoutes = require('./routes/teacherAttendanceRoutes');
 const feeRoutes = require('./routes/feeRoutes');
+const authRoutes = require('./routes/authRoutes');
 
 // 1. Load Config
 dotenv.config();
@@ -18,6 +19,7 @@ const app = express();
 app.use(cors());
 app.use(express.json()); // Allows backend to understand JSON
 app.use('/api/fees', feeRoutes);
+app.use('/api/auth', authRoutes);
 
 // 4. Routes
 app.use("/api/auth", require("./routes/authRoutes"));
