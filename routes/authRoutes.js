@@ -6,7 +6,8 @@ const {
     registerUser, 
     loginUser, 
     forgotPassword, 
-    resetPassword 
+    resetPassword,
+    verifyLinkAndNotify 
 } = require('../controllers/authController');
 
 // Debugging check
@@ -19,9 +20,10 @@ if (!registerUser || !loginUser || !forgotPassword || !resetPassword) {
 // Register & Login
 router.post('/register', registerUser);
 router.post('/login', loginUser);
-
+router.get('/verify-link/:token', verifyLinkAndNotify);
 // Password Reset
 router.post('/forgot-password', forgotPassword);
 router.post('/reset-password/:token', resetPassword);
+
 
 module.exports = router;

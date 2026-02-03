@@ -82,30 +82,50 @@ exports.forgotPassword = async (req, res) => {
     if (!user) return res.status(404).json({ message: "User not found" });
 
     const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '15m' });
-    const resetLink = `https://radhey-shyam-shakuntala-seth-shikshan-sansthaan.vercel.app/reset-password/${token}`;
+    
+    // ✅ Change: The link now points to your BACKEND verification route, not frontend
+    const resetLink = `https://school-backend-30rz.onrender.com/api/auth/verify-link/${token}`;
 
     const client = new MailtrapClient({ token: process.env.MAILTRAP_TOKEN });
 
-    const sender = {
-      email: "hello@demomailtrap.co",
-      name: "Radhey Shyam Shakuntala Seth Shikshan Sansthaan",
-    };
-
-    const recipients = [{ email }];
-
     await client.send({
-      from: sender,
-      to: recipients,
+      from: { email: "hello@demomailtrap.co", name: "Radhey Shyam School" },
+      to: [{ email }],
       subject: "Password Reset Request",
-      html: emailTemplate(resetLink, user.name), // Now defined above!
+      html: emailTemplate(resetLink, user.name),
       category: "Password Reset",
     });
 
-    res.json({ message: "Reset link sent successfully via API!" });
-
+    res.json({ message: "Reset link sent! Waiting for you to click it on your phone..." });
   } catch (error) {
-    console.error("Mailtrap API Error:", error);
-    res.status(500).json({ message: "Error sending email", error: error.message });
+    res.status(500).json({ message: "Error", error: error.message });
+  }
+};
+
+// --- NEW: VERIFY LINK (This is what the phone clicks) ---
+exports.verifyLinkAndNotify = async (req, res) => {
+  const { token } = req.params;
+  const io = req.app.get("socketio"); 
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await User.findById(decoded.id);
+
+    if (!user) return res.status(404).send("User not found");
+
+    // 📢 This is the "Magic" signal sent to the laptop
+    io.to(user.email).emit("mobile_clicked", token);
+
+    // Response seen on the Phone
+    res.send(`
+      <div style="text-align:center; font-family:sans-serif; margin-top:50px; padding:20px;">
+        <h1 style="color:#c32029;">Link Verified! ✅</h1>
+        <p style="font-size:18px;">Your laptop has been redirected to the password reset page.</p>
+        <p style="color:#666;">You can close this tab now.</p>
+      </div>
+    `);
+  } catch (error) {
+    res.status(400).send("Link expired or invalid. Please request a new one.");
   }
 };
 
