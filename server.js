@@ -20,7 +20,8 @@ const io = new Server(server, {
     origin: ["http://localhost:5173",
       "https://radhey-shyam-shakuntala-seth-shikshan-sansthaan.vercel.app"
      ], // Your Vite Frontend URL
-    methods: ["GET", "POST"]
+    methods: ["GET", "POST"],
+    credentials: true
   }
 });
 
