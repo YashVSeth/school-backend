@@ -3,14 +3,14 @@ const FeeStructure = require('../models/FeeStructure');
 const Transaction = require('../models/Transaction');
 
 // ----------------------------------------------------------------
-// 1. GET FINANCE STATUS (For Student Card)
+// 1. GET FINANCE STATUS (Calculates Total Paid from Transactions)
 // ----------------------------------------------------------------
 exports.getFinanceStatus = async (req, res) => {
     try {
         const student = await Student.findById(req.params.studentId).populate('class');
         if (!student) return res.status(404).json({ message: "Student not found" });
 
-        // Use classId to match your schema
+        // 1. Get Fee Structure
         const structure = await FeeStructure.findOne({ 
             classId: student.class._id, 
             academicYear: '2026-27' 
@@ -21,11 +21,15 @@ exports.getFinanceStatus = async (req, res) => {
         const examFee = structure ? structure.examFee : 0;
         const yearlyTotal = structure ? (monthlyFee * 12) + admissionFee + examFee : 0;
 
-        const totalPaid = student.feesPaid || 0;
+        // 2. ✅ FIXED: Calculate Total Paid by summing up ALL Transactions
+        // This ensures the amount always decreases after payment
+        const allTransactions = await Transaction.find({ student: student._id }).sort({ date: -1 });
+        const totalPaid = allTransactions.reduce((acc, curr) => acc + curr.amount, 0);
+
+        // 3. Calculate Outstanding
         const currentOutstanding = Math.max(0, yearlyTotal - totalPaid);
 
-        const history = await Transaction.find({ student: student._id }).sort({ date: -1 });
-
+        // 4. Send Response
         res.json({
             student: {
                 firstName: student.firstName,
@@ -35,10 +39,12 @@ exports.getFinanceStatus = async (req, res) => {
             structure: {
                 monthlyTuition: monthlyFee,
                 admissionFee: admissionFee,
+                examFee: examFee,
                 yearlyTotal: yearlyTotal
             },
-            totalDue: currentOutstanding,
-            history: history.map(t => ({
+            totalDue: currentOutstanding, // This will now update correctly
+            totalPaid: totalPaid,
+            history: allTransactions.map(t => ({
                 amount: t.amount,
                 date: t.date,
                 months: t.monthsPaid
@@ -52,7 +58,7 @@ exports.getFinanceStatus = async (req, res) => {
 };
 
 // ----------------------------------------------------------------
-// 2. COLLECT FEES (Process Payment)
+// 2. COLLECT FEES (Saves Transaction)
 // ----------------------------------------------------------------
 exports.collectFees = async (req, res) => {
     try {
@@ -65,6 +71,7 @@ exports.collectFees = async (req, res) => {
         const student = await Student.findById(studentId);
         if (!student) return res.status(404).json({ message: "Student not found" });
 
+        // 1. Create Transaction
         const newTransaction = new Transaction({
             student: studentId,
             amount: Number(amount),
@@ -75,12 +82,12 @@ exports.collectFees = async (req, res) => {
 
         await newTransaction.save();
 
-        student.feesPaid = (student.feesPaid || 0) + Number(amount);
-        await student.save();
+        // Note: We don't need to manually update student.feesPaid anymore
+        // because getFinanceStatus calculates it dynamically now.
         
         res.json({
             message: "Payment Successful",
-            updatedFees: { totalDue: 0 } 
+            amountPaid: amount
         });
 
     } catch (error) {
@@ -90,40 +97,30 @@ exports.collectFees = async (req, res) => {
 };
 
 // ----------------------------------------------------------------
-// 3. PLACEHOLDERS (Required to prevent server crash)
+// 3. RESET SYSTEM (DANGER: Deletes all history)
 // ----------------------------------------------------------------
+exports.resetFeeData = async (req, res) => {
+    try {
+        // Delete all transactions
+        await Transaction.deleteMany({});
+        
+        // Reset student fee flags if you have them (optional but good practice)
+        await Student.updateMany({}, { $set: { feesPaid: 0 } });
 
-// Needed for router.get('/global-stats', ...)
-exports.getGlobalStats = async (req, res) => {
-    res.json({ totalCollected: 0, pendingDues: 0 });
+        res.json({ message: "System Reset Successful! History is now 0." });
+    } catch (error) {
+        console.error("Reset Error:", error);
+        res.status(500).json({ message: "Reset Failed" });
+    }
 };
 
-// Needed for router.post('/', ...)
-exports.addFee = async (req, res) => {
-    res.json({ message: "Fee added (Placeholder)" });
-};
-
-// Needed for router.get('/', ...)
-exports.getFees = async (req, res) => {
-    res.json([]); 
-};
-
-// Needed for router.get('/stats', ...)
-exports.getFeeStats = async (req, res) => {
-    res.json({ message: "Stats placeholder" });
-};
-
-// Needed for router.get('/student/:studentId', ...)
-exports.getStudentFees = async (req, res) => {
-    res.json({ message: "Student fees placeholder" });
-};
-
-// Needed for router.get('/archive/2022/:studentId', ...)
-exports.archive2022Data = async (req, res) => {
-    res.json({ message: "Archive placeholder" });
-};
-
-// Needed for router.delete('/archive/2022/:studentId', ...)
-exports.purge2022Data = async (req, res) => {
-    res.json({ message: "Purge placeholder" });
-};
+// ----------------------------------------------------------------
+// 4. PLACEHOLDERS (To prevent crashes)
+// ----------------------------------------------------------------
+exports.getGlobalStats = async (req, res) => { res.json({ totalCollected: 0, pendingDues: 0 }); };
+exports.addFee = async (req, res) => { res.json({ message: "Placeholder" }); };
+exports.getFees = async (req, res) => { res.json([]); };
+exports.getFeeStats = async (req, res) => { res.json({ message: "Placeholder" }); };
+exports.getStudentFees = async (req, res) => { res.json({ message: "Placeholder" }); };
+exports.archive2022Data = async (req, res) => { res.json({ message: "Placeholder" }); };
+exports.purge2022Data = async (req, res) => { res.json({ message: "Placeholder" }); };
