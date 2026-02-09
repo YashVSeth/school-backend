@@ -1,28 +1,29 @@
 const express = require('express');
 const router = express.Router();
-
-// --- 1. Middleware Import ---
 const authMiddleware = require('../middleware/authMiddleware');
-// robust check to handle different export styles
 const protect = authMiddleware.protect || authMiddleware;
 
-// --- 2. Controller Imports ---
-const { 
-  addFee, 
-  getFees, 
-  getFeeStats, 
-  getStudentFees 
-} = require('../controllers/feeController');
+// Import the controller
+const feeController = require('../controllers/feeController');
 
-// --- 3. Safety Checks ---
-if (!protect) console.error("❌ Auth Middleware Missing");
-if (!addFee) console.error("❌ Controller 'addFee' Missing");
-if (!getStudentFees) console.error("❌ Controller 'getStudentFees' Missing");
+// --- SAFETY CHECKS ---
+if (!feeController.collectFees) console.error("❌ collectFees is missing in controller!");
+if (!feeController.getGlobalStats) console.error("❌ getGlobalStats is missing in controller!");
 
-// --- 4. Routes ---
-router.post('/', protect, addFee);                 // Add new fee
-router.get('/', protect, getFees);                 // Get all fees
-router.get('/stats', protect, getFeeStats);        // Get stats
-router.get('/student/:studentId', protect, getStudentFees); // Get specific student history
+// --- 1. GLOBAL ANALYTICS (Must be at the top) ---
+// This handles the request from your FinanceDashboard.jsx
+router.get('/global-stats', protect, feeController.getGlobalStats);
 
+// --- 2. MASTER PLAN PAYMENT ROUTES ---
+router.post('/pay', protect, feeController.collectFees); 
+router.get('/status/:studentId', protect, feeController.getFinanceStatus);
+
+// --- 3. STANDARD/LEGACY ROUTES ---
+router.post('/', protect, feeController.addFee);
+router.get('/', protect, feeController.getFees);
+router.get('/stats', protect, feeController.getFeeStats);
+router.get('/student/:studentId', protect, feeController.getStudentFees);
+// Add this with your other routes
+router.get('/archive/2022/:studentId', protect, feeController.archive2022Data);
+router.delete('/archive/2022/:studentId', protect, feeController.purge2022Data);
 module.exports = router;

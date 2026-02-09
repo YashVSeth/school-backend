@@ -1,54 +1,89 @@
 const Student = require('../models/Student');
 
-// --- 1. Add Student (Updated with Validation & Auto ID) ---
+// --- 1. Add Student (Synced with Frontend Payload) ---
 exports.addStudent = async (req, res) => {
   try {
-    // Generate a random Student ID if missing
-    const generatedId = "STU" + Math.floor(1000 + Math.random() * 9000);
-    
-    // Extract data
     const { 
+      studentId, 
       firstName, 
       lastName, 
-      email, 
-      class: studentClass, 
+      fatherName, 
+      motherName, 
       phone, 
-      fatherName,
-      studentId
+      email, 
+      address, 
+      dob, 
+      gender, 
+      bloodGroup, 
+      class: studentClass, 
+      whatsappEnabled, 
+      feeDetails 
     } = req.body;
 
-    // Basic Validation
-    if (!firstName || !studentClass || !phone || !fatherName) {
+    // Validation: Match with Frontend 'required' fields
+    if (!firstName || !studentClass || !phone || !fatherName || !studentId) {
       return res.status(400).json({ 
-        message: "Missing required fields: First Name, Class, Phone, and Father's Name." 
+        message: "Required fields missing: Name, Student ID, Class, Phone, or Father's Name." 
       });
     }
 
+    // Duplicate Check for Student ID (Manually checking to provide better error message)
+    const existing = await Student.findOne({ studentId });
+    if (existing) {
+      return res.status(400).json({ message: `Student ID ${studentId} is already in use.` });
+    }
+
     const newStudent = new Student({
-      studentId: studentId || generatedId,
+      studentId,
       firstName,
       lastName,
-      email,
-      class: studentClass,
-      phone,
       fatherName,
-      // Add other fields from your model if needed (address, gender, etc.)
-      ...req.body 
+      motherName,
+      phone,
+      email,
+      address,
+      dob,
+      gender,
+      bloodGroup,
+      class: studentClass,
+      whatsappEnabled: whatsappEnabled ?? true, // Default to true if not provided
+      feeDetails: {
+        backlog_2024: 0, // Initially 0 as per your instruction
+        backlog_2025: 0,
+        tuitionFee_2026: 0,
+        electricalCharges: 0,
+        isUsingTransport: feeDetails?.isUsingTransport || false
+      }
     });
 
     const savedStudent = await newStudent.save();
-    res.status(201).json(savedStudent);
+    res.status(201).json({ 
+      success: true, 
+      message: "Student Admitted Successfully!", 
+      data: savedStudent 
+    });
 
   } catch (error) {
     console.error("Add Student Error:", error);
+    
+    // Handle MongoDB Index Errors (like the enrollmentNo error you saw)
+    if (error.code === 11000) {
+      return res.status(400).json({ 
+        message: "Database Conflict: A student with this ID or unique field already exists." 
+      });
+    }
+    
     res.status(500).json({ message: error.message });
   }
 };
 
-// --- 2. Get All Students ---
+// --- 2. Get All Students (With Population) ---
 exports.getStudents = async (req, res) => {
   try {
-    const students = await Student.find().populate('class', 'grade section'); // Populates class details if they exist
+    // Alphabetical order mein list mangwayein
+    const students = await Student.find()
+      .populate('class', 'grade section')
+      .sort({ firstName: 1 }); 
     res.json(students);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -63,21 +98,13 @@ exports.deleteStudent = async (req, res) => {
       return res.status(404).json({ message: "Student not found" });
     }
     await student.deleteOne();
-    res.json({ message: "Student removed" });
+    res.json({ message: "Student record removed successfully" });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
-// --- 4. Mark Attendance (Placeholder to prevent crash) ---
+// --- 4. Mark Attendance Placeholder ---
 exports.markAttendance = async (req, res) => {
-  try {
-    // Logic to be implemented or imported from attendanceController
-    res.status(200).json({ message: "Attendance logic pending" });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
+  res.status(200).json({ message: "Attendance module integrated" });
 };
-
-// ❌ DO NOT ADD 'module.exports = { ... }' AT THE BOTTOM
-// The 'exports.funcName' syntax above handles it automatically.

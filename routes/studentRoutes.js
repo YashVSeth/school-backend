@@ -1,9 +1,17 @@
 const express = require("express");
 const router = express.Router();
-const { addStudent, getStudents, markAttendance, deleteStudent } = require("../controllers/studentController");
-const protect = require("../middleware/authMiddleware");
+// ✅ FIXED: Added curly braces { protect }
+const { protect } = require("../middleware/authMiddleware");
 
-// Routes
+// Import Controller Functions
+const { 
+    addStudent, 
+    getStudents, 
+    markAttendance, 
+    deleteStudent 
+} = require("../controllers/studentController");
+
+// --- ROUTES ---
 router.post("/", protect, addStudent);
 router.get("/", protect, getStudents);
 router.post("/attendance", protect, markAttendance); 

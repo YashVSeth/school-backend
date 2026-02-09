@@ -1,10 +1,11 @@
 const express = require('express');
 const router = express.Router();
 const Teacher = require('../models/Teacher');
-const auth = require('../middleware/authMiddleware');
+// ✅ FIXED: Use curly braces to extract 'protect'
+const { protect } = require('../middleware/authMiddleware'); 
 const multer = require('multer');
 const path = require('path');
-const fs = require('fs'); // Added to help delete old files if needed
+const fs = require('fs'); 
 
 // ----------------------------------------------------------------
 // 1. CONFIGURE FILE STORAGE
@@ -14,7 +15,6 @@ const storage = multer.diskStorage({
     cb(null, 'uploads/');
   },
   filename: (req, file, cb) => {
-    // timestamp-filename.extension
     cb(null, Date.now() + '-' + file.originalname);
   }
 });
@@ -24,17 +24,15 @@ const upload = multer({ storage: storage });
 // ----------------------------------------------------------------
 // 2. POST: ADD TEACHER
 // ----------------------------------------------------------------
-router.post('/', auth, upload.fields([
+// ✅ FIXED: Changed 'auth' to 'protect'
+router.post('/', protect, upload.fields([
   { name: 'photo', maxCount: 1 }, 
   { name: 'resume', maxCount: 1 },
   { name: 'idProof', maxCount: 1 }
 ]), async (req, res) => {
     try {
-        // Use spread operator to get text fields (fullName, email, etc.)
         const teacherData = { ...req.body };
 
-        // Map the uploaded files to the database fields
-        // Note: We save them as 'photoUrl' to match the Frontend code
         if (req.files['photo']) {
             teacherData.photoUrl = req.files['photo'][0].path;
         }
@@ -59,7 +57,8 @@ router.post('/', auth, upload.fields([
 // ----------------------------------------------------------------
 // 3. GET: LIST TEACHERS
 // ----------------------------------------------------------------
-router.get('/', auth, async (req, res) => {
+// ✅ FIXED: Changed 'auth' to 'protect'
+router.get('/', protect, async (req, res) => {
     try {
         const teachers = await Teacher.find().sort({ createdAt: -1 });
         res.json(teachers);
@@ -69,18 +68,21 @@ router.get('/', auth, async (req, res) => {
 });
 
 // ----------------------------------------------------------------
-// 4. PUT: UPDATE TEACHER (Fixes "Edit Option Not Working")
+// 4. PUT: UPDATE TEACHER
 // ----------------------------------------------------------------
-router.put('/:id', auth, upload.fields([
+// ✅ FIXED: Changed 'auth' to 'protect'
+router.put('/:id', protect, upload.fields([
   { name: 'photo', maxCount: 1 }, 
   { name: 'resume', maxCount: 1 },
   { name: 'idProof', maxCount: 1 }
 ]), async (req, res) => {
     try {
         const { id } = req.params;
-        const updates = { ...req.body };
+        
+        // Use findByIdAndUpdate for a simpler update logic
+        // We first need to process the files if they exist
+        let updates = { ...req.body };
 
-        // Check if new files were uploaded and update paths accordingly
         if (req.files['photo']) {
             updates.photoUrl = req.files['photo'][0].path;
         }
@@ -91,7 +93,6 @@ router.put('/:id', auth, upload.fields([
             updates.idProofUrl = req.files['idProof'][0].path;
         }
 
-        // Find by ID and Update
         const updatedTeacher = await Teacher.findByIdAndUpdate(id, updates, { new: true });
 
         if (!updatedTeacher) {
@@ -107,9 +108,10 @@ router.put('/:id', auth, upload.fields([
 });
 
 // ----------------------------------------------------------------
-// 5. DELETE: REMOVE TEACHER (Adds "Delete Option")
+// 5. DELETE: REMOVE TEACHER
 // ----------------------------------------------------------------
-router.delete('/:id', auth, async (req, res) => {
+// ✅ FIXED: Changed 'auth' to 'protect'
+router.delete('/:id', protect, async (req, res) => {
     try {
         const { id } = req.params;
         const deletedTeacher = await Teacher.findByIdAndDelete(id);

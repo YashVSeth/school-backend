@@ -1,9 +1,11 @@
 const express = require("express");
 const router = express.Router();
 const Class = require('../models/Class');
-const protect = require("../middleware/authMiddleware");
 
-// ✅ 1. Import 'updateFeeStructure' correctly
+// ✅ FIXED: Use curly braces to get the specific function
+const { protect } = require("../middleware/authMiddleware");
+
+// Import Controllers
 const { 
   addClass, 
   getClasses, 
@@ -16,14 +18,14 @@ if (!updateFeeStructure) console.error("❌ ERROR: updateFeeStructure is missing
 
 // --- ROUTES ---
 
-// ✅ 2. FEE STRUCTURE ROUTE (Must be defined BEFORE /:id routes)
+// 1. FEE STRUCTURE ROUTE (Must be defined BEFORE /:id routes)
 router.post('/fee-structure', protect, updateFeeStructure);
 
-// 3. Standard Routes (Using Controller)
+// 2. Standard Routes
 router.post("/", protect, addClass);
 router.get("/", protect, getClasses);
 
-// 4. Update Class (Assign Subjects/Teachers)
+// 3. Update Class (Assign Subjects/Teachers)
 router.put('/:id', async (req, res) => {
   try {
     const updatedClass = await Class.findByIdAndUpdate(
@@ -38,7 +40,7 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// 5. Delete Class
+// 4. Delete Class
 router.delete('/:id', async (req, res) => {
   try {
     await Class.findByIdAndDelete(req.params.id);

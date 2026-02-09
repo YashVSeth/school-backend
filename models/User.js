@@ -10,6 +10,8 @@ const UserSchema = new mongoose.Schema({
     type: String,
     required: true,
     unique: true,
+    trim: true,
+    lowercase: true
   },
   password: {
     type: String,
@@ -17,21 +19,34 @@ const UserSchema = new mongoose.Schema({
   },
   role: {
     type: String,
-    enum: ["admin", "teacher", "student"], // Defines who the user is
+    enum: ["admin", "teacher", "student"], // Admin aur Teacher hamare main focus hain
     default: "admin",
   },
+  // Teacher Portal Integration: 
+  // Agar role 'teacher' hai, toh ye field uske profile se connect hogi
+  teacherProfile: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Teacher',
+    default: null
+  },
+  // Account Status (Security ke liye)
+  isActive: {
+    type: Boolean,
+    default: true
+  }
 }, { timestamps: true });
 
-// Encrypt password before saving
+// Password Encrypt karne ka logic (Aapka existing logic preserved)
 UserSchema.pre("save", async function (next) {
   if (!this.isModified("password")) {
-    return next(); // <--- ADDED "return" HERE TO PREVENT ERRORS
+    return next(); 
   }
   const salt = await bcrypt.genSalt(10);
   this.password = await bcrypt.hash(this.password, salt);
   next();
 });
-// Method to compare passwords
+
+// Password compare karne ka method (Aapka existing logic preserved)
 UserSchema.methods.matchPassword = async function (enteredPassword) {
   return await bcrypt.compare(enteredPassword, this.password);
 };
