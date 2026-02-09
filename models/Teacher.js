@@ -7,6 +7,7 @@ const TeacherSchema = new mongoose.Schema({
     gender: { type: String },
     dob: { type: Date },
     email: { type: String, required: true, unique: true },
+    phone: { type: String }, // ✅ YE LINE ADD KAREIN (Zaroori hai)
     permanentAddress: { type: String },
     aadhaarNumber: { type: String },
     bloodGroup: { type: String },
@@ -22,7 +23,7 @@ const TeacherSchema = new mongoose.Schema({
     resume: { type: String },
     idProof: { type: String },
     username: { type: String, unique: true },
-    password: { type: String }, // In a real app, hash this before saving!
+    password: { type: String, required: true }, // Hash karke save karenge
     role: { type: String, default: 'Teacher' },
     status: { type: String, default: 'Active' },
 
