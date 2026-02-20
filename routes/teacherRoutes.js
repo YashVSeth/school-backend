@@ -1,13 +1,12 @@
 const express = require('express');
 const router = express.Router();
 const Teacher = require('../models/Teacher');
-// ✅ FIXED: Use curly braces to extract 'protect'
 const { protect } = require('../middleware/authMiddleware'); 
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const bcrypt = require('bcryptjs'); // ✅ Added for Password Hashing
-const jwt = require('jsonwebtoken'); // ✅ Added for Token Generation
+const bcrypt = require('bcryptjs'); 
+const jwt = require('jsonwebtoken'); 
 
 // ----------------------------------------------------------------
 // 1. CONFIGURE FILE STORAGE
@@ -24,7 +23,7 @@ const storage = multer.diskStorage({
 const upload = multer({ storage: storage });
 
 // ----------------------------------------------------------------
-// 2. POST: ADD TEACHER (With Password Hashing)
+// 2. POST: ADD TEACHER (✅ UPDATED: Username logic removed)
 // ----------------------------------------------------------------
 router.post('/', protect, upload.fields([
   { name: 'photo', maxCount: 1 }, 
@@ -34,7 +33,7 @@ router.post('/', protect, upload.fields([
     try {
         const { email, password, ...restBody } = req.body;
 
-        // A. Check Duplicate
+        // A. Check Duplicate Email
         const existing = await Teacher.findOne({ email });
         if (existing) {
             return res.status(400).json({ message: "Teacher with this email already exists" });
@@ -44,7 +43,7 @@ router.post('/', protect, upload.fields([
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash(password, salt);
 
-        // C. Prepare Data (Map files to Schema fields: photo, resume, idProof)
+        // C. Prepare Data (Ab hum 'username' nahi bhej rahe)
         const teacherData = { 
             ...restBody,
             email,
@@ -52,7 +51,7 @@ router.post('/', protect, upload.fields([
         };
 
         if (req.files['photo']) {
-            teacherData.photo = req.files['photo'][0].path; // ✅ Schema uses 'photo', not 'photoUrl'
+            teacherData.photo = req.files['photo'][0].path; 
         }
         if (req.files['resume']) {
             teacherData.resume = req.files['resume'][0].path;
@@ -73,7 +72,7 @@ router.post('/', protect, upload.fields([
 });
 
 // ----------------------------------------------------------------
-// 3. GET: LIST TEACHERS
+// 3. GET: LIST TEACHERS (Sahi hai)
 // ----------------------------------------------------------------
 router.get('/', protect, async (req, res) => {
     try {
@@ -85,7 +84,7 @@ router.get('/', protect, async (req, res) => {
 });
 
 // ----------------------------------------------------------------
-// 4. PUT: UPDATE TEACHER
+// 4. PUT: UPDATE TEACHER (Sahi hai)
 // ----------------------------------------------------------------
 router.put('/:id', protect, upload.fields([
   { name: 'photo', maxCount: 1 }, 
@@ -96,89 +95,75 @@ router.put('/:id', protect, upload.fields([
         const { id } = req.params;
         const updates = { ...req.body };
 
-        // Password Update Logic (Optional)
         if (updates.password && updates.password.length > 0) {
             const salt = await bcrypt.genSalt(10);
             updates.password = await bcrypt.hash(updates.password, salt);
         } else {
-            delete updates.password; // Don't override if empty
+            delete updates.password; 
         }
 
-        if (req.files['photo']) {
-            updates.photo = req.files['photo'][0].path;
-        }
-        if (req.files['resume']) {
-            updates.resume = req.files['resume'][0].path;
-        }
-        if (req.files['idProof']) {
-            updates.idProof = req.files['idProof'][0].path;
-        }
+        if (req.files['photo']) updates.photo = req.files['photo'][0].path;
+        if (req.files['resume']) updates.resume = req.files['resume'][0].path;
+        if (req.files['idProof']) updates.idProof = req.files['idProof'][0].path;
 
         const updatedTeacher = await Teacher.findByIdAndUpdate(id, updates, { new: true });
-
-        if (!updatedTeacher) {
-            return res.status(404).json({ message: "Teacher not found" });
-        }
+        if (!updatedTeacher) return res.status(404).json({ message: "Teacher not found" });
 
         res.json(updatedTeacher);
-
     } catch (err) {
-        console.error("Update Error:", err);
         res.status(500).json({ message: "Error updating teacher" });
     }
 });
 
 // ----------------------------------------------------------------
-// 5. DELETE: REMOVE TEACHER
+// 5. DELETE: REMOVE TEACHER (Sahi hai)
 // ----------------------------------------------------------------
 router.delete('/:id', protect, async (req, res) => {
     try {
         const { id } = req.params;
         const deletedTeacher = await Teacher.findByIdAndDelete(id);
-
-        if (!deletedTeacher) {
-            return res.status(404).json({ message: "Teacher not found" });
-        }
-
+        if (!deletedTeacher) return res.status(404).json({ message: "Teacher not found" });
         res.json({ message: "Teacher deleted successfully" });
     } catch (err) {
-        console.error("Delete Error:", err);
         res.status(500).json({ message: "Error deleting teacher" });
     }
 });
 
 // ----------------------------------------------------------------
-// 6. POST: TEACHER LOGIN (Mobile Dashboard)
+// 6. POST: TEACHER LOGIN (✅ UPDATED: LOGIN VIA EMAIL)
 // ----------------------------------------------------------------
 router.post('/login', async (req, res) => {
     try {
-        const { email, password } = req.body;
+        const { email, password } = req.body; 
 
-        // A. Teacher Dhundo
-        const teacher = await Teacher.findOne({ email });
+        console.log("👉 Login Attempt via Email:", email);
+
+        // ✅ CHANGE: Ab 'email' se hi search ho raha hai
+        const teacher = await Teacher.findOne({ email: email });
+
         if (!teacher) {
-            return res.status(404).json({ message: "Teacher account not found" });
+            return res.status(404).json({ message: "Invalid Email" });
         }
 
-        // B. Password Check Karo
+        // B. Password Check
         const isMatch = await bcrypt.compare(password, teacher.password);
         if (!isMatch) {
             return res.status(400).json({ message: "Invalid Password" });
         }
 
-        // C. Token Generate Karo
+        // C. Token Generate
         const token = jwt.sign(
             { id: teacher._id, role: 'teacher' }, 
             process.env.JWT_SECRET, 
             { expiresIn: '30d' }
         );
 
-        // D. Response Bhejo
+        // D. Response
         res.json({
             token,
             teacherId: teacher._id,
             name: teacher.fullName,
-            email: teacher.email,
+            email: teacher.email, // ✅ Ab Email jayega
             photo: teacher.photo,
             role: 'teacher'
         });

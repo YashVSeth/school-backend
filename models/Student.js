@@ -14,7 +14,9 @@ const StudentSchema = new mongoose.Schema({
     phone: { type: String },      
     address: { type: String },    
     gender: { type: String },     
-    bloodGroup: { type: String }, 
+    bloodGroup: { type: String },
+    height: { type: String },     
+    weight: { type: String },
 
     // --- ACADEMIC ---
     class: { 
@@ -30,6 +32,9 @@ const StudentSchema = new mongoose.Schema({
 
     // --- WATERFALL FINANCE ---
     feeDetails: {
+        // ✅ NEW: Advance Wallet for leftover change
+        walletBalance: { type: Number, default: 0 }, 
+        
         // Backlogs (Arrears)
         backlog_2024: { type: Number, default: 0 },
         backlog_2025: { type: Number, default: 0 },
@@ -47,20 +52,14 @@ const StudentSchema = new mongoose.Schema({
         transportRoute: { type: String, default: "" },
         transportFee: { type: Number, default: 0 },
 
-        /**
-         * ✅ TRANSACTION HISTORY
-         * Persists all payments made via the Finance Console
-         */
+        // Transaction History (Legacy array)
         history: [{
             amount: { type: Number, required: true },
             date: { type: Date, default: Date.now },
-            months: [{ type: String }] // Example: ["Apr", "May"]
+            months: [{ type: String }] 
         }],
 
-        /**
-         * ✅ ARCHIVE SHIELD
-         * Stores 2022 data for the Archiving/Purging feature
-         */
+        // Archive Shield
         legacy_2022: { type: Object, default: null }
     },
 
@@ -76,7 +75,7 @@ const StudentSchema = new mongoose.Schema({
     }
 }, { timestamps: true });
 
-// Indexing for faster searches in the Finance Console
+// Indexing for faster searches
 StudentSchema.index({ firstName: 'text', lastName: 'text', studentId: 'text' });
 
 module.exports = mongoose.model('Student', StudentSchema);

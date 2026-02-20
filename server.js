@@ -37,13 +37,13 @@ app.use(express.json());
 const authRoutes = require('./routes/authRoutes');
 const feeRoutes = require('./routes/feeRoutes');
 const feeStructureRoutes = require('./routes/feeStructureRoutes');
-const attendanceRoutes = require('./routes/teacherAttendanceRoutes');
+
 const classRoutes = require("./routes/classRoutes");
 const studentRoutes = require("./routes/studentRoutes");
 const teacherRoutes = require("./routes/teacherRoutes");
 const adminRoutes = require("./routes/adminRoutes");
 const subjectRoutes = require('./routes/subjectRoutes');
-
+const attendanceRoutes = require('./routes/attendance');
 // --- MOUNT ROUTES ---
 app.use('/api/auth', authRoutes);
 app.use('/api/fees', feeRoutes);

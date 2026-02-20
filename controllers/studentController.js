@@ -6,7 +6,7 @@ exports.addStudent = async (req, res) => {
     const { 
       studentId, firstName, lastName, fatherName, motherName, phone, 
       email, address, dob, gender, bloodGroup, class: studentClass, 
-      whatsappEnabled, feeDetails 
+      whatsappEnabled, feeDetails, height, weight // ✅ Added height & weight
     } = req.body;
 
     // Validation
@@ -23,6 +23,8 @@ exports.addStudent = async (req, res) => {
     const newStudent = new Student({
       studentId, firstName, lastName, fatherName, motherName, phone, 
       email, address, dob, gender, bloodGroup, class: studentClass, 
+      height, // ✅ MUST BE HERE TO SAVE TO DB
+      weight, // ✅ MUST BE HERE TO SAVE TO DB
       whatsappEnabled: whatsappEnabled ?? true,
       feeDetails: {
         backlog_2024: 0,
@@ -75,7 +77,7 @@ exports.markAttendance = async (req, res) => {
   res.status(200).json({ message: "Attendance module integrated" });
 };
 
-// --- ✅ 5. PROMOTE STUDENT (NEW) ---
+// --- 5. PROMOTE STUDENT ---
 exports.promoteStudent = async (req, res) => {
   try {
     const { studentId, newClassId } = req.body;
@@ -84,24 +86,40 @@ exports.promoteStudent = async (req, res) => {
       return res.status(400).json({ message: "Student ID and New Class are required" });
     }
 
-    // Find Student by ID and Update only the Class field
     const updatedStudent = await Student.findByIdAndUpdate(
       studentId,
       { class: newClassId },
-      { new: true } // Returns the updated document
+      { new: true } 
     ).populate('class');
 
     if (!updatedStudent) {
       return res.status(404).json({ message: "Student not found" });
     }
 
-    res.json({ 
-      message: "Student Promoted Successfully", 
-      student: updatedStudent 
-    });
+    res.json({ message: "Student Promoted Successfully", student: updatedStudent });
 
   } catch (error) {
     console.error("Promotion Error:", error);
     res.status(500).json({ message: "Failed to promote student" });
   }
+};
+
+// --- ✅ 6. UPDATE STUDENT (REQUIRED FOR EDIT MODAL) ---
+exports.updateStudent = async (req, res) => {
+    try {
+      const updatedStudent = await Student.findByIdAndUpdate(
+        req.params.id, 
+        req.body, 
+        { new: true, runValidators: true }
+      );
+  
+      if (!updatedStudent) {
+        return res.status(404).json({ message: "Student not found" });
+      }
+  
+      res.json({ success: true, message: "Student Updated Successfully!", data: updatedStudent });
+    } catch (error) {
+      console.error("Update Student Error:", error);
+      res.status(500).json({ message: error.message || "Failed to update student" });
+    }
 };

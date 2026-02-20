@@ -8,7 +8,8 @@ const {
     addStudent, 
     getStudents, 
     markAttendance, 
-    deleteStudent 
+    deleteStudent,
+    updateStudent // ✅ Imported the new update function
 } = require("../controllers/studentController");
 
 // --- ROUTES ---
@@ -16,5 +17,6 @@ router.post("/", protect, addStudent);
 router.get("/", protect, getStudents);
 router.post("/attendance", protect, markAttendance); 
 router.delete("/:id", protect, deleteStudent);
+router.put("/:id", protect, updateStudent); // ✅ Added PUT route for editing students
 
 module.exports = router;
