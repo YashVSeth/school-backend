@@ -17,7 +17,7 @@ const server = http.createServer(app);
 const allowedOrigins = [
   "http://localhost:5173",
   "https://radhey-shyam-shakuntala-seth-shikshan-sansthaan.vercel.app",
-  "https://school-frontend-eviwrge5e-yash29seth-2507s-projects.vercel.app" // 👈 Added your new Vercel URL!
+   // 👈 Added your new Vercel URL!
 ];
 
 // --- SOCKET.IO SETUP ---
