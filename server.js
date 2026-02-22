@@ -54,7 +54,8 @@ app.use("/api/students", studentRoutes);
 app.use("/api/teachers", teacherRoutes);
 app.use("/api/admin", adminRoutes);
 app.use('/api/subjects', subjectRoutes);
-
+// Add this near your other routes:
+app.use('/api/schedule', require('./routes/scheduleRoutes'));
 // Static Folder for Uploads
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 

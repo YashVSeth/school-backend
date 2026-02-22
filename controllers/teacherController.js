@@ -1,5 +1,5 @@
 const Teacher = require("../models/Teacher");
-const Class = require("../models/Class"); // ✅ Class Model Import (Schedule ke liye zaroori)
+const Class = require("../models/Class"); 
 const bcrypt = require('bcryptjs'); 
 
 // 1. Get all teachers
@@ -27,10 +27,11 @@ exports.addTeacher = async (req, res) => {
       return res.status(400).json({ message: "Teacher with this email already exists" });
     }
 
-    // B. Extract File Paths
-    const photoUrl = req.files['photo'] ? req.files['photo'][0].path : null;
-    const resumeUrl = req.files['resume'] ? req.files['resume'][0].path : null;
-    const idProofUrl = req.files['idProof'] ? req.files['idProof'][0].path : null;
+    // B. Extract File Paths safely (Works perfectly with Cloudinary!)
+    // If no file is uploaded, req.files might be undefined, so we use safe checks.
+    const photoUrl = req.files && req.files['photo'] ? req.files['photo'][0].path : null;
+    const resumeUrl = req.files && req.files['resume'] ? req.files['resume'][0].path : null;
+    const idProofUrl = req.files && req.files['idProof'] ? req.files['idProof'][0].path : null;
 
     // C. 🔒 HASH PASSWORD
     const salt = await bcrypt.genSalt(10);
@@ -60,9 +61,9 @@ exports.addTeacher = async (req, res) => {
 exports.updateTeacher = async (req, res) => {
   try {
     const { id } = req.params;
-    const updates = req.body;
+    const updates = { ...req.body };
 
-    // File updates
+    // File updates safely
     if (req.files) {
       if (req.files['photo']) updates.photoUrl = req.files['photo'][0].path;
       if (req.files['resume']) updates.resumeUrl = req.files['resume'][0].path;
@@ -74,7 +75,7 @@ exports.updateTeacher = async (req, res) => {
         const salt = await bcrypt.genSalt(10);
         updates.password = await bcrypt.hash(updates.password, salt);
     } else {
-        delete updates.password;
+        delete updates.password; // Prevent saving an empty password
     }
 
     const updatedTeacher = await Teacher.findByIdAndUpdate(id, updates, { new: true });

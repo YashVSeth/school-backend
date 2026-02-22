@@ -3,27 +3,34 @@ const router = express.Router();
 const Teacher = require('../models/Teacher');
 const { protect } = require('../middleware/authMiddleware'); 
 const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
+const cloudinary = require('cloudinary').v2;
+require('dotenv').config();
 const bcrypt = require('bcryptjs'); 
 const jwt = require('jsonwebtoken'); 
 
 // ----------------------------------------------------------------
-// 1. CONFIGURE FILE STORAGE
+// 1. CONFIGURE CLOUDINARY FILE STORAGE (✅ Best for Render/Vercel)
 // ----------------------------------------------------------------
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, 'uploads/');
-  },
-  filename: (req, file, cb) => {
-    cb(null, Date.now() + '-' + file.originalname);
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
+});
+
+const storage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: {
+    folder: 'school_management_teachers', 
+    resource_type: 'auto', 
+    allowed_formats: ['jpg', 'jpeg', 'png', 'pdf', 'doc', 'docx']
   }
 });
 
 const upload = multer({ storage: storage });
 
 // ----------------------------------------------------------------
-// 2. POST: ADD TEACHER (✅ UPDATED: Username logic removed)
+// 2. POST: ADD TEACHER 
 // ----------------------------------------------------------------
 router.post('/', protect, upload.fields([
   { name: 'photo', maxCount: 1 }, 
@@ -43,21 +50,22 @@ router.post('/', protect, upload.fields([
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash(password, salt);
 
-        // C. Prepare Data (Ab hum 'username' nahi bhej rahe)
+        // C. Prepare Data
         const teacherData = { 
             ...restBody,
             email,
             password: hashedPassword 
         };
 
-        if (req.files['photo']) {
-            teacherData.photo = req.files['photo'][0].path; 
+        // ✅ FIXED: Using Optional Chaining to prevent crashes if a file is missing
+        if (req.files?.photo) {
+            teacherData.photo = req.files.photo[0].path; 
         }
-        if (req.files['resume']) {
-            teacherData.resume = req.files['resume'][0].path;
+        if (req.files?.resume) {
+            teacherData.resume = req.files.resume[0].path;
         }
-        if (req.files['idProof']) {
-            teacherData.idProof = req.files['idProof'][0].path;
+        if (req.files?.idProof) {
+            teacherData.idProof = req.files.idProof[0].path;
         }
 
         const newTeacher = new Teacher(teacherData);
@@ -72,7 +80,7 @@ router.post('/', protect, upload.fields([
 });
 
 // ----------------------------------------------------------------
-// 3. GET: LIST TEACHERS (Sahi hai)
+// 3. GET: LIST TEACHERS 
 // ----------------------------------------------------------------
 router.get('/', protect, async (req, res) => {
     try {
@@ -84,7 +92,7 @@ router.get('/', protect, async (req, res) => {
 });
 
 // ----------------------------------------------------------------
-// 4. PUT: UPDATE TEACHER (Sahi hai)
+// 4. PUT: UPDATE TEACHER 
 // ----------------------------------------------------------------
 router.put('/:id', protect, upload.fields([
   { name: 'photo', maxCount: 1 }, 
@@ -102,9 +110,10 @@ router.put('/:id', protect, upload.fields([
             delete updates.password; 
         }
 
-        if (req.files['photo']) updates.photo = req.files['photo'][0].path;
-        if (req.files['resume']) updates.resume = req.files['resume'][0].path;
-        if (req.files['idProof']) updates.idProof = req.files['idProof'][0].path;
+        // ✅ FIXED: Using Optional Chaining
+        if (req.files?.photo) updates.photo = req.files.photo[0].path;
+        if (req.files?.resume) updates.resume = req.files.resume[0].path;
+        if (req.files?.idProof) updates.idProof = req.files.idProof[0].path;
 
         const updatedTeacher = await Teacher.findByIdAndUpdate(id, updates, { new: true });
         if (!updatedTeacher) return res.status(404).json({ message: "Teacher not found" });
@@ -116,7 +125,7 @@ router.put('/:id', protect, upload.fields([
 });
 
 // ----------------------------------------------------------------
-// 5. DELETE: REMOVE TEACHER (Sahi hai)
+// 5. DELETE: REMOVE TEACHER 
 // ----------------------------------------------------------------
 router.delete('/:id', protect, async (req, res) => {
     try {
@@ -130,7 +139,7 @@ router.delete('/:id', protect, async (req, res) => {
 });
 
 // ----------------------------------------------------------------
-// 6. POST: TEACHER LOGIN (✅ UPDATED: LOGIN VIA EMAIL)
+// 6. POST: TEACHER LOGIN
 // ----------------------------------------------------------------
 router.post('/login', async (req, res) => {
     try {
@@ -138,32 +147,28 @@ router.post('/login', async (req, res) => {
 
         console.log("👉 Login Attempt via Email:", email);
 
-        // ✅ CHANGE: Ab 'email' se hi search ho raha hai
         const teacher = await Teacher.findOne({ email: email });
 
         if (!teacher) {
             return res.status(404).json({ message: "Invalid Email" });
         }
 
-        // B. Password Check
         const isMatch = await bcrypt.compare(password, teacher.password);
         if (!isMatch) {
             return res.status(400).json({ message: "Invalid Password" });
         }
 
-        // C. Token Generate
         const token = jwt.sign(
             { id: teacher._id, role: 'teacher' }, 
             process.env.JWT_SECRET, 
             { expiresIn: '30d' }
         );
 
-        // D. Response
         res.json({
             token,
             teacherId: teacher._id,
             name: teacher.fullName,
-            email: teacher.email, // ✅ Ab Email jayega
+            email: teacher.email, 
             photo: teacher.photo,
             role: 'teacher'
         });
