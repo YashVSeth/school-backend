@@ -13,14 +13,18 @@ connectDB();
 const app = express();
 const server = http.createServer(app);
 
+// ✅ Define allowed origins in one place so it's easy to manage
+const allowedOrigins = [
+  "http://localhost:5173",
+  "https://radhey-shyam-shakuntala-seth-shikshan-sansthaan.vercel.app",
+  "https://school-frontend-eviwrge5e-yash29seth-2507s-projects.vercel.app" // 👈 Added your new Vercel URL!
+];
+
 // --- SOCKET.IO SETUP ---
 const io = new Server(server, {
   cors: {
-    origin: [
-      "http://localhost:5173",
-      "https://radhey-shyam-shakuntala-seth-shikshan-sansthaan.vercel.app"
-    ],
-    methods: ["GET", "POST"],
+    origin: allowedOrigins,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     credentials: true
   }
 });
@@ -29,11 +33,14 @@ const io = new Server(server, {
 app.set("socketio", io);
 
 // --- MIDDLEWARE ---
-app.use(cors());
+// ✅ UPDATED: Express CORS now uses the exact same allowed list and allows credentials
+app.use(cors({
+  origin: allowedOrigins,
+  credentials: true
+}));
 app.use(express.json());
 
 // --- IMPORT ROUTES (Moved to top for better debugging) ---
-// If the app crashes, it will now tell you exactly which line below is failing
 const authRoutes = require('./routes/authRoutes');
 const feeRoutes = require('./routes/feeRoutes');
 const feeStructureRoutes = require('./routes/feeStructureRoutes');
@@ -44,6 +51,7 @@ const teacherRoutes = require("./routes/teacherRoutes");
 const adminRoutes = require("./routes/adminRoutes");
 const subjectRoutes = require('./routes/subjectRoutes');
 const attendanceRoutes = require('./routes/attendance');
+
 // --- MOUNT ROUTES ---
 app.use('/api/auth', authRoutes);
 app.use('/api/fees', feeRoutes);
@@ -54,8 +62,8 @@ app.use("/api/students", studentRoutes);
 app.use("/api/teachers", teacherRoutes);
 app.use("/api/admin", adminRoutes);
 app.use('/api/subjects', subjectRoutes);
-// Add this near your other routes:
 app.use('/api/schedule', require('./routes/scheduleRoutes'));
+
 // Static Folder for Uploads
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
