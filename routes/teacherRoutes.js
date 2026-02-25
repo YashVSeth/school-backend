@@ -1,30 +1,30 @@
 const express = require('express');
 const router = express.Router();
 const Teacher = require('../models/Teacher');
-const { protect } = require('../middleware/authMiddleware'); 
+const { protect } = require('../middleware/authMiddleware');
 const multer = require('multer');
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const cloudinary = require('cloudinary').v2;
 require('dotenv').config();
-const bcrypt = require('bcryptjs'); 
-const jwt = require('jsonwebtoken'); 
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 
 // ----------------------------------------------------------------
 // 1. CONFIGURE CLOUDINARY FILE STORAGE (✅ Best for Render/Vercel)
 // ----------------------------------------------------------------
 cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
 const storage = new CloudinaryStorage({
-  cloudinary: cloudinary,
-  params: {
-    folder: 'school_management_teachers', 
-    resource_type: 'auto', 
-    allowed_formats: ['jpg', 'jpeg', 'png', 'pdf', 'doc', 'docx']
-  }
+    cloudinary: cloudinary,
+    params: {
+        folder: 'school_management_teachers',
+        resource_type: 'auto',
+        allowed_formats: ['jpg', 'jpeg', 'png', 'pdf', 'doc', 'docx']
+    }
 });
 
 const upload = multer({ storage: storage });
@@ -33,9 +33,9 @@ const upload = multer({ storage: storage });
 // 2. POST: ADD TEACHER 
 // ----------------------------------------------------------------
 router.post('/', protect, upload.fields([
-  { name: 'photo', maxCount: 1 }, 
-  { name: 'resume', maxCount: 1 },
-  { name: 'idProof', maxCount: 1 }
+    { name: 'photo', maxCount: 1 },
+    { name: 'resume', maxCount: 1 },
+    { name: 'idProof', maxCount: 1 }
 ]), async (req, res) => {
     try {
         const { email, password, ...restBody } = req.body;
@@ -51,15 +51,15 @@ router.post('/', protect, upload.fields([
         const hashedPassword = await bcrypt.hash(password, salt);
 
         // C. Prepare Data
-        const teacherData = { 
+        const teacherData = {
             ...restBody,
             email,
-            password: hashedPassword 
+            password: hashedPassword
         };
 
         // ✅ FIXED: Using Optional Chaining to prevent crashes if a file is missing
         if (req.files?.photo) {
-            teacherData.photo = req.files.photo[0].path; 
+            teacherData.photo = req.files.photo[0].path;
         }
         if (req.files?.resume) {
             teacherData.resume = req.files.resume[0].path;
@@ -70,7 +70,7 @@ router.post('/', protect, upload.fields([
 
         const newTeacher = new Teacher(teacherData);
         const savedTeacher = await newTeacher.save();
-        
+
         res.status(201).json(savedTeacher);
 
     } catch (err) {
@@ -92,12 +92,40 @@ router.get('/', protect, async (req, res) => {
 });
 
 // ----------------------------------------------------------------
+// 4.5 PUT: BULK UPDATE TEACHER BASE SALARIES
+// ----------------------------------------------------------------
+router.put('/bulk-salary', protect, async (req, res) => {
+    try {
+        const { salaries } = req.body;
+        // salaries array format: [{ teacherId: "...", baseSalary: 30000 }, ...]
+
+        if (!Array.isArray(salaries) || salaries.length === 0) {
+            return res.status(400).json({ message: "Valid salaries array is required" });
+        }
+
+        const bulkOps = salaries.map(record => ({
+            updateOne: {
+                filter: { _id: record.teacherId },
+                update: { $set: { baseSalary: record.baseSalary } }
+            }
+        }));
+
+        await Teacher.bulkWrite(bulkOps);
+
+        res.json({ message: "Base salaries updated successfully!" });
+    } catch (err) {
+        console.error("PUT /bulk-salary ERROR:", err.message);
+        res.status(500).json({ message: "Failed to update bulk salaries" });
+    }
+});
+
+// ----------------------------------------------------------------
 // 4. PUT: UPDATE TEACHER 
 // ----------------------------------------------------------------
 router.put('/:id', protect, upload.fields([
-  { name: 'photo', maxCount: 1 }, 
-  { name: 'resume', maxCount: 1 },
-  { name: 'idProof', maxCount: 1 }
+    { name: 'photo', maxCount: 1 },
+    { name: 'resume', maxCount: 1 },
+    { name: 'idProof', maxCount: 1 }
 ]), async (req, res) => {
     try {
         const { id } = req.params;
@@ -107,7 +135,7 @@ router.put('/:id', protect, upload.fields([
             const salt = await bcrypt.genSalt(10);
             updates.password = await bcrypt.hash(updates.password, salt);
         } else {
-            delete updates.password; 
+            delete updates.password;
         }
 
         // ✅ FIXED: Using Optional Chaining
@@ -123,6 +151,8 @@ router.put('/:id', protect, upload.fields([
         res.status(500).json({ message: "Error updating teacher" });
     }
 });
+
+
 
 // ----------------------------------------------------------------
 // 5. DELETE: REMOVE TEACHER 
@@ -143,7 +173,7 @@ router.delete('/:id', protect, async (req, res) => {
 // ----------------------------------------------------------------
 router.post('/login', async (req, res) => {
     try {
-        const { email, password } = req.body; 
+        const { email, password } = req.body;
 
         console.log("👉 Login Attempt via Email:", email);
 
@@ -159,8 +189,8 @@ router.post('/login', async (req, res) => {
         }
 
         const token = jwt.sign(
-            { id: teacher._id, role: 'teacher' }, 
-            process.env.JWT_SECRET, 
+            { id: teacher._id, role: 'teacher' },
+            process.env.JWT_SECRET,
             { expiresIn: '30d' }
         );
 
@@ -168,7 +198,7 @@ router.post('/login', async (req, res) => {
             token,
             teacherId: teacher._id,
             name: teacher.fullName,
-            email: teacher.email, 
+            email: teacher.email,
             photo: teacher.photo,
             role: 'teacher'
         });

@@ -17,7 +17,7 @@ const server = http.createServer(app);
 const allowedOrigins = [
   "http://localhost:5173",
   "https://radhey-shyam-shakuntala-seth-shikshan-sansthaan.vercel.app",
-   // 👈 Added your new Vercel URL!
+  // 👈 Added your new Vercel URL!
 ];
 
 // --- SOCKET.IO SETUP ---
@@ -51,6 +51,7 @@ const teacherRoutes = require("./routes/teacherRoutes");
 const adminRoutes = require("./routes/adminRoutes");
 const subjectRoutes = require('./routes/subjectRoutes');
 const attendanceRoutes = require('./routes/attendance');
+const salaryRoutes = require('./routes/salaryRoutes');
 
 // --- MOUNT ROUTES ---
 app.use('/api/auth', authRoutes);
@@ -63,6 +64,8 @@ app.use("/api/teachers", teacherRoutes);
 app.use("/api/admin", adminRoutes);
 app.use('/api/subjects', subjectRoutes);
 app.use('/api/schedule', require('./routes/scheduleRoutes'));
+app.use('/api/dashboard', require('./routes/dashboardRoutes')); // 👈 CONNECTED DASHBOARD WIDGETS
+app.use('/api/salary', salaryRoutes);
 
 // Static Folder for Uploads
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));

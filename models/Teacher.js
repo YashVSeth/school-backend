@@ -7,13 +7,14 @@ const TeacherSchema = new mongoose.Schema({
     gender: { type: String },
     dob: { type: Date },
     // ✅ Email hi ab primary identity hai
-    email: { type: String, required: true, unique: true }, 
-    phone: { type: String }, 
+    email: { type: String, required: true, unique: true },
+    phone: { type: String },
     permanentAddress: { type: String },
     aadhaarNumber: { type: String },
     bloodGroup: { type: String },
-    
-    // Step 2: Qualifications
+
+    // Step 2: Qualifications & Payroll
+    baseSalary: { type: Number, default: 0 },
     highestQualification: { type: String },
     university: { type: String },
     specialization: { type: String },
@@ -23,12 +24,12 @@ const TeacherSchema = new mongoose.Schema({
     // Step 3: Credentials & Status
     resume: { type: String },
     idProof: { type: String },
-    
+
     // ⚠️ UPDATE: 'username' se 'unique: true' hata diya gaya hai 
     // taaki ye login mein rukawat na bane.
-    username: { type: String }, 
-    
-    password: { type: String, required: true }, 
+    username: { type: String },
+
+    password: { type: String, required: true },
     role: { type: String, default: 'Teacher' },
     status: { type: String, default: 'Active' },
 
