@@ -10,10 +10,13 @@ const leaveRequestSchema = new mongoose.Schema({
         type: String,
         required: true
     },
-    days: {
-        type: Number,
-        required: true,
-        default: 1
+    startDate: {
+        type: Date,
+        required: true
+    },
+    endDate: {
+        type: Date,
+        required: true
     },
     status: {
         type: String,

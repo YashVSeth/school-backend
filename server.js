@@ -52,12 +52,16 @@ const adminRoutes = require("./routes/adminRoutes");
 const subjectRoutes = require('./routes/subjectRoutes');
 const attendanceRoutes = require('./routes/attendance');
 const salaryRoutes = require('./routes/salaryRoutes');
+const markRoutes = require('./routes/markRoutes');
+const leaveRoutes = require('./routes/leaveRoutes');
 
 // --- MOUNT ROUTES ---
 app.use('/api/auth', authRoutes);
 app.use('/api/fees', feeRoutes);
 app.use('/api/fee-structure', feeStructureRoutes);
 app.use('/api/attendance', attendanceRoutes);
+app.use('/api/marks', markRoutes);
+app.use('/api/leaves', leaveRoutes);
 app.use("/api/classes", classRoutes);
 app.use("/api/students", studentRoutes);
 app.use("/api/teachers", teacherRoutes);

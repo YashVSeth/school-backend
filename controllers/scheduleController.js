@@ -27,6 +27,53 @@ exports.getScheduleByClass = async (req, res) => {
     }
 };
 
+exports.getScheduleByTeacher = async (req, res) => {
+    try {
+        const teacherId = req.params.teacherId;
+
+        // 1. Find all classes where this teacher is assigned to ANY subject
+        const classes = await Class.find({ "subjects.teacher": teacherId });
+
+        // 2. Build a filter of (classId + subject) combinations they actually own
+        const validBlocks = [];
+        classes.forEach(cls => {
+            const subjectsTaughtByThem = cls.subjects.filter(s => s.teacher?.toString() === teacherId.toString());
+            subjectsTaughtByThem.forEach(taughtSubRef => {
+                validBlocks.push({
+                    classId: cls._id,
+                    subjectId: taughtSubRef.subject // This gives the Subject DB _id
+                });
+            });
+        });
+
+        // Resolve subject names to match against Schedule logic (which stores subject names as strings currently)
+        const allTargetSubjectIds = [...new Set(validBlocks.map(b => b.subjectId))];
+        const resolvedSubjects = await Subject.find({ _id: { $in: allTargetSubjectIds } });
+
+        const scheduleQueryOR = validBlocks.map(vb => {
+            const subjectModel = resolvedSubjects.find(s => s._id.toString() === vb.subjectId.toString());
+            return {
+                classId: vb.classId,
+                subject: subjectModel ? subjectModel.name : null
+            };
+        }).filter(q => q.subject !== null);
+
+        if (scheduleQueryOR.length === 0) {
+            return res.json([]); // Teacher teaches 0 recognized classes
+        }
+
+        // 3. Find all scheduled time blocks matching those exact Grade/Subject combos!
+        const schedule = await Schedule.find({ $or: scheduleQueryOR })
+            .populate('classId', 'grade section')
+            .sort({ day: 1, timeSlot: 1 });
+
+        res.json(schedule);
+    } catch (error) {
+        console.error("Get Schedule By Teacher Error:", error);
+        res.status(500).json({ message: "Failed to fetch teacher schedule" });
+    }
+};
+
 exports.addScheduleEntry = async (req, res) => {
     try {
         const { classId, day, timeSlot, subject } = req.body;

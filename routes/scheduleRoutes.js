@@ -5,6 +5,7 @@ const authMiddleware = require('../middleware/authMiddleware');
 const protect = authMiddleware.protect || authMiddleware;
 
 router.get('/:classId', protect, scheduleController.getScheduleByClass);
+router.get('/teacher/:teacherId', protect, scheduleController.getScheduleByTeacher);
 router.post('/', protect, scheduleController.addScheduleEntry);
 router.put('/:id', protect, scheduleController.updateScheduleEntry);
 router.delete('/:id', protect, scheduleController.deleteScheduleEntry);

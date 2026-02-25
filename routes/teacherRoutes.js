@@ -8,6 +8,7 @@ const cloudinary = require('cloudinary').v2;
 require('dotenv').config();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const { getMySchedule } = require('../controllers/teacherController');
 
 // ----------------------------------------------------------------
 // 1. CONFIGURE CLOUDINARY FILE STORAGE (✅ Best for Render/Vercel)
@@ -90,6 +91,24 @@ router.get('/', protect, async (req, res) => {
         res.status(500).json({ message: "Server Error" });
     }
 });
+
+// ----------------------------------------------------------------
+// 3.5 GET: MY PROFILE (LOGGED-IN TEACHER)
+// ----------------------------------------------------------------
+router.get('/my-profile', protect, async (req, res) => {
+    try {
+        const teacher = await Teacher.findById(req.user.id).select('-password');
+        if (!teacher) return res.status(404).json({ message: "Teacher Profile not found" });
+        res.json(teacher);
+    } catch (error) {
+        res.status(500).json({ message: "Server Error" });
+    }
+});
+
+// ----------------------------------------------------------------
+// 3.6 GET: MY SCHEDULE (For logged-in Teacher)
+// ----------------------------------------------------------------
+router.get('/my-schedule', protect, getMySchedule);
 
 // ----------------------------------------------------------------
 // 4.5 PUT: BULK UPDATE TEACHER BASE SALARIES

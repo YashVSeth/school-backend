@@ -79,6 +79,31 @@ router.post('/', protect, async (req, res) => {
   }
 });
 
+// 2.5 GET DAILY ATTENDANCE FOR A CLASS
+router.get('/daily', protect, async (req, res) => {
+  try {
+    const { classId, date } = req.query;
+    if (!classId || !date) {
+      return res.status(400).json({ message: "classId and date are required" });
+    }
+
+    // Only exact date matching
+    const attendance = await Attendance.findOne({
+      classId: classId,
+      date: new Date(date)
+    });
+
+    if (attendance) {
+      res.json(attendance.records);
+    } else {
+      res.json([]); // No attendance taken yet for this date
+    }
+  } catch (err) {
+    console.error("GET /daily ERROR:", err.message);
+    res.status(500).json({ message: "Failed to fetch daily attendance" });
+  }
+});
+
 // ==========================================
 // 🏫 TEACHER ATTENDANCE ROUTES (NEW API)
 // ==========================================

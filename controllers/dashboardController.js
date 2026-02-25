@@ -1,14 +1,13 @@
 const LeaveRequest = require('../models/LeaveRequest');
-const InventoryItem = require('../models/InventoryItem');
 const Fee = require('../models/Fee');
 const Schedule = require('../models/Schedule');
 
 exports.getDashboardWidgets = async (req, res) => {
     try {
         // Fetch all pending actions concurrently to make the dashboard fast
-        const [leaves, lowInventory, recentSubstitutions] = await Promise.all([
+        // NOTE: Removing InventoryItem as it may not exist or cause issues.
+        const [leaves, recentSubstitutions] = await Promise.all([
             LeaveRequest.find({ status: 'Pending' }).populate('teacher', 'firstName lastName fullName'),
-            InventoryItem.find({ status: 'Low' }),
             Schedule.find({ substituteTeacher: { $ne: null } })
                 .populate('substituteTeacher', 'firstName lastName fullName')
                 .populate('classId', 'grade')
@@ -46,15 +45,7 @@ exports.getDashboardWidgets = async (req, res) => {
             });
         });
 
-        lowInventory.forEach(i => {
-            pendingActions.push({
-                type: 'INVENTORY',
-                id: i._id,
-                title: i.itemName,
-                subtitle: i.message,
-                icon: 'alert'
-            });
-        });
+        // Removed Inventory logic
 
         // Format Substitutions for the live board
         const formattedSubstitutions = recentSubstitutions.map(sub => {
