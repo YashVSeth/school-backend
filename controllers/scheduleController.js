@@ -3,10 +3,8 @@ const Class = require('../models/Class');
 const Subject = require('../models/Subject');
 const Teacher = require('../models/Teacher');
 
-// Helper to determine the EXACT Teacher ID handling a slot right now (handles substitute overrides)
-const getActiveTeacherForSlot = async (classId, subjectName, substituteTeacher) => {
-    if (substituteTeacher) return substituteTeacher.toString();
-
+// Helper to determine the EXACT Teacher ID handling a slot right now
+const getActiveTeacherForSlot = async (classId, subjectName) => {
     const sub = await Subject.findOne({ name: subjectName });
     if (!sub) return null;
 
@@ -92,14 +90,14 @@ exports.addScheduleEntry = async (req, res) => {
         }
 
         // 2. Check for TEACHER CONFLICT: Is the teacher for this new subject already booked?
-        const targetTeacherId = await getActiveTeacherForSlot(classId, subject, null);
+        const targetTeacherId = await getActiveTeacherForSlot(classId, subject);
 
         if (targetTeacherId) {
             // Fetch ALL schedules happening at this exact day & time
             const concurrentSchedules = await Schedule.find({ day, timeSlot });
 
             for (let sim of concurrentSchedules) {
-                const simTeacherId = await getActiveTeacherForSlot(sim.classId, sim.subject, sim.substituteTeacher);
+                const simTeacherId = await getActiveTeacherForSlot(sim.classId, sim.subject);
 
                 if (simTeacherId === targetTeacherId) {
                     const tObj = await Teacher.findById(simTeacherId);
@@ -131,43 +129,11 @@ exports.deleteScheduleEntry = async (req, res) => {
 
 exports.updateScheduleEntry = async (req, res) => {
     try {
-        const { substituteTeacher } = req.body;
         const scheduleEntryId = req.params.id;
-
-        // Check for conflicts if we are assigning a NEW substitute (and not just clearing them)
-        if (substituteTeacher) {
-            const scheduleEntry = await Schedule.findById(scheduleEntryId);
-            if (!scheduleEntry) return res.status(404).json({ message: "Schedule entry not found" });
-
-            // Fetch ALL schedules happening at this exact day & time
-            const concurrentSchedules = await Schedule.find({ day: scheduleEntry.day, timeSlot: scheduleEntry.timeSlot });
-
-            for (let sim of concurrentSchedules) {
-                // Skip comparing against the exact same schedule block we are updating right now!
-                if (sim._id.toString() === scheduleEntryId) continue;
-
-                const simTeacherId = await getActiveTeacherForSlot(sim.classId, sim.subject, sim.substituteTeacher);
-
-                if (simTeacherId === substituteTeacher.toString()) {
-                    const tObj = await Teacher.findById(simTeacherId);
-                    const tName = tObj ? (tObj.fullName || tObj.firstName || 'This teacher') : 'This substitute';
-                    return res.status(400).json({
-                        message: `💥 Substitute Clash! ${tName} is already occupied teaching ${sim.subject} in another class at this time.`
-                    });
-                }
-            }
-        }
-
-
-        // Updating substituteTeacher - explicitly allowing it to be null if they clear it
-        const updateData = {};
-        if (substituteTeacher !== undefined) {
-            updateData.substituteTeacher = substituteTeacher || null;
-        }
 
         const updatedEntry = await Schedule.findByIdAndUpdate(
             scheduleEntryId,
-            updateData,
+            req.body,
             { new: true }
         );
 

@@ -1,7 +1,7 @@
 const Student = require('../models/Student');
 const FeeStructure = require('../models/FeeStructure');
 const Transaction = require('../models/Transaction');
-const Invoice = require('../models/Invoice'); 
+const Invoice = require('../models/Invoice');
 
 // ----------------------------------------------------------------
 // 1. GET INVOICES FOR A STUDENT (UPDATED FOR NEW UI)
@@ -9,7 +9,7 @@ const Invoice = require('../models/Invoice');
 exports.getStudentInvoices = async (req, res) => {
     try {
         let query = { student: req.params.studentId };
-        
+
         // If frontend DOES NOT ask for all, only show pending dues
         if (req.query.all !== 'true') {
             query.status = { $ne: 'Paid' };
@@ -42,14 +42,14 @@ exports.processCartPayment = async (req, res) => {
         let paidInvoiceTitles = [];
 
         for (let inv of invoices) {
-            if (moneyLeftToDistribute <= 0) break; 
+            if (moneyLeftToDistribute <= 0) break;
 
             const pendingOnInvoice = inv.amount - inv.amountPaid;
             const paymentForThisInvoice = Math.min(pendingOnInvoice, moneyLeftToDistribute);
 
             inv.amountPaid += paymentForThisInvoice;
             moneyLeftToDistribute -= paymentForThisInvoice;
-            
+
             if (inv.amountPaid >= inv.amount) {
                 inv.status = 'Paid';
             } else {
@@ -71,7 +71,7 @@ exports.processCartPayment = async (req, res) => {
         const newTxn = new Transaction({
             student: studentId,
             amount: Number(amountPaid),
-            monthsPaid: paidInvoiceTitles, 
+            monthsPaid: paidInvoiceTitles,
             paymentMethod: paymentMethod || 'Cash',
             date: new Date(),
             academicYear: '2026-27'
@@ -114,7 +114,7 @@ exports.collectFees = async (req, res) => {
         }
 
         student.feeDetails = details;
-        student.markModified('feeDetails'); 
+        student.markModified('feeDetails');
         await student.save();
 
         const newTransaction = new Transaction({
@@ -126,7 +126,7 @@ exports.collectFees = async (req, res) => {
             academicYear: '2026-27'
         });
         await newTransaction.save();
-        
+
         res.json({
             message: `Payment applied to ${category} Successfully!`,
             amountPaid: payAmount,
@@ -163,12 +163,28 @@ exports.getGlobalStats = async (req, res) => {
         ]);
         const totalCollected = totalCollectedResult.length > 0 ? totalCollectedResult[0].total : 0;
 
+        // 2b. Calculate Late Fees
+        const lateFeeResult = await Transaction.aggregate([
+            { $match: { ...txMatch, monthsPaid: { $regex: /late fee|penalty/i } } },
+            { $group: { _id: null, total: { $sum: "$amount" } } }
+        ]);
+        const lateFeesCharged = lateFeeResult.length > 0 ? lateFeeResult[0].total : 0;
+
         // 3. Calculate Dues
         const feeStructures = await FeeStructure.find({ academicYear: '2026-27' });
         const feeMap = {};
+
         feeStructures.forEach(fs => {
             if (fs.classId) {
-                feeMap[fs.classId.toString()] = (fs.monthlyTuition * 12) + fs.admissionFee + fs.examFee;
+                let totalAnnual = 0;
+                fs.mandatoryFees?.forEach(fee => {
+                    if (fee.frequency === 'MONTHLY') totalAnnual += (fee.amount * 12);
+                    else if (fee.frequency === 'QUARTERLY') totalAnnual += (fee.amount * 4);
+                    else if (fee.frequency === 'HALF-YEARLY') totalAnnual += (fee.amount * 2);
+                    else totalAnnual += fee.amount; // YEARLY or ONE-TIME
+                });
+
+                feeMap[fs.classId.toString()] = totalAnnual;
             }
         });
 
@@ -183,21 +199,75 @@ exports.getGlobalStats = async (req, res) => {
 
                 totalArrears2024 += (student.feeDetails?.backlog_2024 || 0);
                 totalArrears2025 += (student.feeDetails?.backlog_2025 || 0);
-                
+
                 const electrical = (student.feeDetails?.electricalCharges || 0);
-                totalCurrent2026 += (yearlyFee + electrical); 
+                totalCurrent2026 += (yearlyFee + electrical);
             }
         });
 
         const grandTotalDue = totalArrears2024 + totalArrears2025 + Math.max(0, totalCurrent2026 - (totalCollected * 0.5));
 
+        // 4. Fetch Recent Transactions
+        let recentTransactions = await Transaction.find(txMatch)
+            .sort({ date: -1 })
+            .limit(10)
+            .populate({
+                path: 'student',
+                select: 'firstName lastName studentId class feesPaid feeDetails',
+                populate: { path: 'class', select: 'grade' }
+            })
+            .lean();
+
+        // 4b. Dynamically insert the student's current total balance to the transaction log so the dashboard looks legit without faking it
+        recentTransactions = recentTransactions.map(txn => {
+            if (txn.student && txn.student.class && txn.student.class._id) {
+                const cId = txn.student.class._id.toString();
+                const yearlyFee = feeMap[cId] || 0;
+                const ar24 = txn.student.feeDetails?.backlog_2024 || 0;
+                const ar25 = txn.student.feeDetails?.backlog_2025 || 0;
+                const elec = txn.student.feeDetails?.electricalCharges || 0;
+
+                const totalDuesThisKid = ar24 + ar25 + elec + yearlyFee;
+                const totalPaidByKid = txn.student.feesPaid || 0;
+
+                txn.remainingBalance = Math.max(0, totalDuesThisKid - totalPaidByKid);
+            } else {
+                txn.remainingBalance = 0;
+            }
+            return txn;
+        });
+
+        // 5. Calculate Monthly Breakdown (Last 6 Months)
+        const sixMonthsAgo = new Date();
+        sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+
+        const monthlyAggregation = await Transaction.aggregate([
+            { $match: { ...txMatch, date: { $gte: sixMonthsAgo } } },
+            {
+                $group: {
+                    _id: { month: { $month: "$date" }, year: { $year: "$date" } },
+                    total: { $sum: "$amount" }
+                }
+            },
+            { $sort: { "_id.year": 1, "_id.month": 1 } }
+        ]);
+
+        const monthsMap = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        const collectionTrends = monthlyAggregation.map(item => ({
+            name: monthsMap[item._id.month - 1],
+            total: item.total
+        }));
+
         res.json({
             grandTotalDue: Math.max(0, grandTotalDue),
             totalStudents: students.length,
-            totalArrears2024, 
-            totalArrears2025, 
-            totalCurrent2026, 
-            totalCollected
+            totalArrears2024,
+            totalArrears2025,
+            totalCurrent2026,
+            totalCollected,
+            lateFeesCharged,
+            recentTransactions,
+            collectionTrends
         });
 
     } catch (error) {
@@ -214,9 +284,9 @@ exports.getFinanceStatus = async (req, res) => {
         const student = await Student.findById(req.params.studentId).populate('class');
         if (!student) return res.status(404).json({ message: "Student not found" });
 
-        const structure = await FeeStructure.findOne({ 
-            classId: student.class._id, 
-            academicYear: '2026-27' 
+        const structure = await FeeStructure.findOne({
+            classId: student.class._id,
+            academicYear: '2026-27'
         });
 
         // ✅ Extract from new array schema, fallback to old schema, or 0
@@ -230,7 +300,7 @@ exports.getFinanceStatus = async (req, res) => {
                 const tFee = structure.mandatoryFees.find(f => f.name.toLowerCase().includes('tuition'));
                 const aFee = structure.mandatoryFees.find(f => f.name.toLowerCase().includes('admission'));
                 const eFee = structure.mandatoryFees.find(f => f.name.toLowerCase().includes('exam'));
-                
+
                 monthlyFee = tFee ? tFee.amount : 0;
                 admissionFee = aFee ? aFee.amount : 0;
                 examFee = eFee ? eFee.amount : 0;
@@ -244,13 +314,13 @@ exports.getFinanceStatus = async (req, res) => {
 
         const yearlyTotal = (monthlyFee * 12) + admissionFee + examFee;
 
-        const currentBacklog = (student.feeDetails?.backlog_2024 || 0) + 
-                               (student.feeDetails?.backlog_2025 || 0) + 
-                               (student.feeDetails?.electricalCharges || 0);
+        const currentBacklog = (student.feeDetails?.backlog_2024 || 0) +
+            (student.feeDetails?.backlog_2025 || 0) +
+            (student.feeDetails?.electricalCharges || 0);
 
         const totalPaid = student.feesPaid || 0;
-        const walletBalance = student.feeDetails?.walletBalance || 0; 
-        
+        const walletBalance = student.feeDetails?.walletBalance || 0;
+
         res.json({
             student: { firstName: student.firstName, lastName: student.lastName },
             structure: { monthlyTuition: monthlyFee, admissionFee: admissionFee, examFee: examFee },
@@ -272,8 +342,8 @@ exports.getFinanceStatus = async (req, res) => {
 exports.resetFeeData = async (req, res) => {
     try {
         await Transaction.deleteMany({});
-        await Invoice.deleteMany({}); 
-        await Student.updateMany({}, { $set: { feesPaid: 0, "feeDetails.walletBalance": 0 } }); 
+        await Invoice.deleteMany({});
+        await Student.updateMany({}, { $set: { feesPaid: 0, "feeDetails.walletBalance": 0 } });
         res.json({ message: "History and Invoices Deleted." });
     } catch (error) {
         res.status(500).json({ message: "Reset Failed" });
@@ -286,18 +356,18 @@ exports.resetFeeData = async (req, res) => {
 exports.createInvoice = async (req, res) => {
     try {
         const { studentId, title, amount } = req.body;
-        
+
         if (!title || !amount) {
             return res.status(400).json({ message: "Title and Amount are required" });
         }
 
         const newInvoice = new Invoice({
             student: studentId,
-            title: title, 
+            title: title,
             amount: Number(amount),
             dueDate: new Date()
         });
-        
+
         await newInvoice.save();
         res.status(201).json({ message: "Bill Generated Successfully!", invoice: newInvoice });
 
@@ -313,7 +383,7 @@ exports.createInvoice = async (req, res) => {
 exports.generateMonthlyBills = async (req, res) => {
     try {
         const { monthTitle, defaultAmount, classId } = req.body;
-        
+
         // ✅ Only find students in the specific class (or all if none provided)
         let query = { status: 'active' };
         if (classId) query.class = classId;
@@ -321,17 +391,38 @@ exports.generateMonthlyBills = async (req, res) => {
         const students = await Student.find(query);
         let newInvoicesCount = 0;
 
+        // Pre-fetch all structures into a map
+        const allStructures = await FeeStructure.find({ academicYear: '2026-27' });
+        const structureMap = {};
+
+        allStructures.forEach(fs => {
+            if (fs.classId) {
+                let monthlySum = 0;
+                fs.mandatoryFees?.forEach(fee => {
+                    if (fee.frequency === 'MONTHLY') monthlySum += fee.amount;
+                });
+                structureMap[fs.classId.toString()] = monthlySum;
+            }
+        });
+
         for (let student of students) {
-            const existingInvoice = await Invoice.findOne({ 
-                student: student._id, 
-                title: monthTitle 
+            const studentClassId = student.class?.toString();
+            // Automatically determine their grade's specific monthly fee from the map
+            const specificMonthlyFee = structureMap[studentClassId] || Number(defaultAmount);
+
+            // Generate zero-balance invoices? Skip if 0.
+            if (specificMonthlyFee <= 0) continue;
+
+            const existingInvoice = await Invoice.findOne({
+                student: student._id,
+                title: monthTitle
             });
 
             if (!existingInvoice) {
                 await Invoice.create({
                     student: student._id,
                     title: monthTitle,
-                    amount: Number(defaultAmount),
+                    amount: specificMonthlyFee,
                     dueDate: new Date()
                 });
                 newInvoicesCount++;
@@ -346,16 +437,89 @@ exports.generateMonthlyBills = async (req, res) => {
         res.status(500).json({ message: "Failed to generate bulk bills" });
     }
 };
+
+// ----------------------------------------------------------------
+// 8.5 EXPORT MONTHLY REPORT (ALL TRANSACTIONS)
+// ----------------------------------------------------------------
+exports.exportMonthlyReport = async (req, res) => {
+    try {
+        const { year, month } = req.query; // optional filters
+
+        let query = {};
+        if (year && month) {
+            // Setup start and end dates for a specific month lookup
+            const startDate = new Date(year, month - 1, 1);
+            const endDate = new Date(year, month, 0, 23, 59, 59);
+            query.date = { $gte: startDate, $lte: endDate };
+        } else {
+            // Default: Fetch current month
+            const now = new Date();
+            const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+            query.date = { $gte: startOfMonth };
+        }
+
+        // Fetch Transactions with deeply populated fields
+        const allTransactions = await Transaction.find(query)
+            .sort({ date: -1 })
+            .populate({
+                path: 'student',
+                select: 'firstName lastName studentId class feesPaid feeDetails',
+                populate: { path: 'class', select: 'grade section' }
+            })
+            .lean();
+
+        // Dynamically append remaining balances exactly like globalStats does it
+        const feeStructures = await FeeStructure.find({ academicYear: '2026-27' });
+        const feeMap = {};
+        feeStructures.forEach(fs => {
+            if (fs.classId) {
+                let totalAnnual = 0;
+                fs.mandatoryFees?.forEach(fee => {
+                    if (fee.frequency === 'MONTHLY') totalAnnual += (fee.amount * 12);
+                    else if (fee.frequency === 'QUARTERLY') totalAnnual += (fee.amount * 4);
+                    else if (fee.frequency === 'HALF-YEARLY') totalAnnual += (fee.amount * 2);
+                    else totalAnnual += fee.amount;
+                });
+                feeMap[fs.classId.toString()] = totalAnnual;
+            }
+        });
+
+        const mappedTransactions = allTransactions.map(txn => {
+            if (txn.student && txn.student.class && txn.student.class._id) {
+                const cId = txn.student.class._id.toString();
+                const yearlyFee = feeMap[cId] || 0;
+                const ar24 = txn.student.feeDetails?.backlog_2024 || 0;
+                const ar25 = txn.student.feeDetails?.backlog_2025 || 0;
+                const elec = txn.student.feeDetails?.electricalCharges || 0;
+
+                const totalDuesThisKid = ar24 + ar25 + elec + yearlyFee;
+                const totalPaidByKid = txn.student.feesPaid || 0;
+
+                txn.remainingBalance = Math.max(0, totalDuesThisKid - totalPaidByKid);
+            } else {
+                txn.remainingBalance = 0;
+            }
+            return txn;
+        });
+
+        res.json(mappedTransactions);
+
+    } catch (error) {
+        console.error("Export Report Error:", error);
+        res.status(500).json({ message: "Failed to generate report data" });
+    }
+};
+
 // ----------------------------------------------------------------
 // 9. GET FEE STRUCTURE FOR A CLASS
 // ----------------------------------------------------------------
 exports.getFeeStructure = async (req, res) => {
     try {
-        const structure = await FeeStructure.findOne({ 
-            classId: req.params.classId, 
-            academicYear: '2026-27' 
+        const structure = await FeeStructure.findOne({
+            classId: req.params.classId,
+            academicYear: '2026-27'
         });
-        
+
         // If found, send it. If not, send empty arrays so frontend doesn't crash
         res.json(structure || { mandatoryFees: [], optionalFees: [] });
     } catch (error) {

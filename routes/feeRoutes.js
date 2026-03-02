@@ -12,9 +12,10 @@ if (!feeController.getGlobalStats) console.error("❌ getGlobalStats is missing 
 
 // --- 1. GLOBAL ANALYTICS (Must be at the top) ---
 router.get('/global-stats', protect, feeController.getGlobalStats);
+router.get('/monthly-report', protect, feeController.exportMonthlyReport);
 
 // --- 2. MASTER PLAN PAYMENT ROUTES (VERSION 1) ---
-router.post('/pay', protect, feeController.collectFees); 
+router.post('/pay', protect, feeController.collectFees);
 router.get('/status/:studentId', protect, feeController.getFinanceStatus);
 
 // ✅ --- 2.5 NEW VERSION 2.0 "CART & INVOICE" ROUTES ---
@@ -35,6 +36,6 @@ router.get('/student/:studentId', protect, feeController.getStudentFees);
 router.get('/archive/2022/:studentId', protect, feeController.archive2022Data);
 router.delete('/archive/2022/:studentId', protect, feeController.purge2022Data);
 // --- FEE STRUCTURE SETUP ROUTES ---
-router.get('/structure/:classId', protect, feeController.getFeeStructure); 
+router.get('/structure/:classId', protect, feeController.getFeeStructure);
 router.post('/structure', protect, feeController.saveFeeStructure);
 module.exports = router;

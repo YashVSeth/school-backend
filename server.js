@@ -62,6 +62,7 @@ app.use('/api/fee-structure', feeStructureRoutes);
 app.use('/api/attendance', attendanceRoutes);
 app.use('/api/marks', markRoutes);
 app.use('/api/leaves', leaveRoutes);
+app.use('/api/expenses', require('./routes/expenseRoutes'));
 app.use("/api/classes", classRoutes);
 app.use("/api/students", studentRoutes);
 app.use("/api/teachers", teacherRoutes);

@@ -6,11 +6,8 @@ exports.getDashboardWidgets = async (req, res) => {
     try {
         // Fetch all pending actions concurrently to make the dashboard fast
         // NOTE: Removing InventoryItem as it may not exist or cause issues.
-        const [leaves, recentSubstitutions] = await Promise.all([
-            LeaveRequest.find({ status: 'Pending' }).populate('teacher', 'firstName lastName fullName'),
-            Schedule.find({ substituteTeacher: { $ne: null } })
-                .populate('substituteTeacher', 'firstName lastName fullName')
-                .populate('classId', 'grade')
+        const [leaves] = await Promise.all([
+            LeaveRequest.find({ status: 'Pending' }).populate('teacher', 'firstName lastName fullName')
         ]);
 
         // We can optionally mock fee anomalies here, or look for genuine pending invoices if they exist
@@ -24,12 +21,18 @@ exports.getDashboardWidgets = async (req, res) => {
 
         leaves.forEach(l => {
             const name = l.teacher?.fullName || `${l.teacher?.firstName || ''} ${l.teacher?.lastName || ''}`.trim() || 'Unknown Teacher';
+
+            // Format dates simply
+            const sDate = new Date(l.startDate).toLocaleDateString('en-GB');
+            const eDate = new Date(l.endDate).toLocaleDateString('en-GB');
+
             pendingActions.push({
                 type: 'LEAVE',
                 id: l._id,
                 title: `${name} (Teacher)`,
-                subtitle: `${l.reason} • ${l.days} Day(s)`,
+                subtitle: `${l.reason} • ${sDate} to ${eDate}`,
                 iconText: name.substring(0, 2).toUpperCase(), // e.g. "RK"
+                leaveData: l
             });
         });
 
@@ -47,23 +50,9 @@ exports.getDashboardWidgets = async (req, res) => {
 
         // Removed Inventory logic
 
-        // Format Substitutions for the live board
-        const formattedSubstitutions = recentSubstitutions.map(sub => {
-            const subName = sub.substituteTeacher?.fullName || `${sub.substituteTeacher?.firstName || ''} ${sub.substituteTeacher?.lastName || ''}`.trim();
-            const gradeName = sub.classId?.grade || 'Unknown Class';
-
-            return {
-                id: sub._id,
-                period: sub.timeSlot,
-                className: `Class ${gradeName}`,
-                subject: sub.subject,
-                substituteName: subName || 'Unknown Sub'
-            };
-        });
-
         res.json({
             pendingActions,
-            substitutions: formattedSubstitutions
+            substitutions: [] // Returning empty array to prevent frontend mapping crashes initially
         });
 
     } catch (error) {

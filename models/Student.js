@@ -2,51 +2,53 @@ const mongoose = require('mongoose');
 
 const StudentSchema = new mongoose.Schema({
     // --- BASIC INFORMATION ---
-    studentId: { type: String, required: true, unique: true }, 
-    firstName: { type: String, required: true },               
-    lastName: { type: String },                                
+    studentId: { type: String, required: true, unique: true },
+    firstName: { type: String, required: true },
+    lastName: { type: String },
     fatherName: { type: String, required: true },
-    motherName: { type: String }, 
-    
+    motherName: { type: String },
+
     // --- PROFILE DETAILS ---
-    dob: { type: Date },          
-    email: { type: String },      
-    phone: { type: String },      
-    address: { type: String },    
-    gender: { type: String },     
+    dob: { type: Date },
+    email: { type: String },
+    phone: { type: String },
+    address: { type: String },
+    gender: { type: String },
     bloodGroup: { type: String },
-    height: { type: String },     
+    aadharNo: { type: String },
+    previousSchool: { type: String },
+    height: { type: String },
     weight: { type: String },
 
     // --- ACADEMIC ---
-    class: { 
-        type: mongoose.Schema.Types.ObjectId, 
-        ref: 'Class', 
-        required: true 
+    class: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Class',
+        required: true
     },
-    rollNo: { type: Number }, 
+    rollNo: { type: Number },
     dateOfAdmission: { type: Date, default: Date.now },
 
     // --- MASTER PLAN: SETTINGS ---
-    whatsappEnabled: { type: Boolean, default: true }, 
+    whatsappEnabled: { type: Boolean, default: true },
 
     // --- WATERFALL FINANCE ---
     feeDetails: {
         // ✅ NEW: Advance Wallet for leftover change
-        walletBalance: { type: Number, default: 0 }, 
-        
+        walletBalance: { type: Number, default: 0 },
+
         // Backlogs (Arrears)
         backlog_2024: { type: Number, default: 0 },
         backlog_2025: { type: Number, default: 0 },
-        
+
         // Current Session
         tuitionFee_2026: { type: Number, default: 0 },
-        
+
         // Charges
         admissionFee: { type: Number, default: 0 },
         electricalCharges: { type: Number, default: 0 },
         maintenanceCharges: { type: Number, default: 0 },
-        
+
         // Transport
         isUsingTransport: { type: Boolean, default: false },
         transportRoute: { type: String, default: "" },
@@ -56,7 +58,7 @@ const StudentSchema = new mongoose.Schema({
         history: [{
             amount: { type: Number, required: true },
             date: { type: Date, default: Date.now },
-            months: [{ type: String }] 
+            months: [{ type: String }]
         }],
 
         // Archive Shield
@@ -64,14 +66,14 @@ const StudentSchema = new mongoose.Schema({
     },
 
     performanceRemarks: {
-        type: String, 
-        default: "No remarks added yet." 
+        type: String,
+        default: "No remarks added yet."
     },
-    
-    status: { 
-        type: String, 
-        enum: ['active', 'inactive'], 
-        default: 'active' 
+
+    status: {
+        type: String,
+        enum: ['active', 'inactive'],
+        default: 'active'
     }
 }, { timestamps: true });
 

@@ -1,99 +1,68 @@
 const FeeStructure = require('../models/FeeStructure');
 
-// ----------------------------------------------------------------
-// 1. UPSERT (Create or Update)
-// ----------------------------------------------------------------
-const upsertStructure = async (req, res) => {
-    try {
-        // Frontend sends: { classId, breakdown: { monthlyTuition, ... } }
-        const { classId, academicYear, breakdown } = req.body;
-
-        // Validation
-        if (!breakdown) {
-            return res.status(400).json({ message: "Fee breakdown is required" });
-        }
-
-        // Map Frontend "breakdown" object -> Schema "Flat" fields
-        const feeData = {
-            classId: classId,
-            academicYear: academicYear || "2026-27",
-            monthlyTuition: Number(breakdown.monthlyTuition) || 0,
-            admissionFee: Number(breakdown.admissionFee) || 0,
-            examFee: Number(breakdown.examFee) || 0,
-            // Add transport or development fee if your frontend supports it later
-            developmentFee: 0, 
-            transportMonthly: 0
-        };
-
-        // Use findOneAndUpdate with upsert
-        const structure = await FeeStructure.findOneAndUpdate(
-            { classId: classId }, // Query by classId
-            feeData,              // Update with flat data
-            { new: true, upsert: true } // Create if not exists
-        );
-
-        res.status(200).json(structure);
-
-    } catch (error) {
-        console.error("Upsert Error:", error);
-        res.status(500).json({ message: "Failed to save fee structure", error: error.message });
-    }
-};
-
-// ----------------------------------------------------------------
-// 2. GET Structure by Class ID
-// ----------------------------------------------------------------
-const getStructureByClass = async (req, res) => {
+// @desc    Get fee structure for a specific class and academic year
+// @route   GET /api/fee-structure/:classId
+// @access  Private/Admin
+const getFeeStructureByClass = async (req, res) => {
     try {
         const { classId } = req.params;
+        const academicYear = req.query.academicYear || '2026-27'; // Default to current
 
-        // Validate ID format to prevent crashes
-        if (!classId.match(/^[0-9a-fA-F]{24}$/)) {
-            return res.status(400).json({ message: "Invalid Class ID" });
-        }
+        let feeStructure = await FeeStructure.findOne({ classId, academicYear });
 
-        const structure = await FeeStructure.findOne({ classId: classId });
-
-        if (!structure) {
-            // Return default format matching Frontend expectations
-            return res.json({
-                breakdown: {
-                    monthlyTuition: 0,
-                    admissionFee: 0,
-                    examFee: 0
-                },
-                totalAmount: 0
+        if (!feeStructure) {
+            // Return empty structure instead of 404 to allow creating a new one from the UI easily
+            return res.status(200).json({
+                classId,
+                academicYear,
+                mandatoryFees: [],
+                optionalFees: []
             });
         }
 
-        // Transform Flat Schema back to Nested format for Frontend
-        // (So we don't have to change the React code)
-        const yearlyTotal = (structure.monthlyTuition * 12) + structure.admissionFee + structure.examFee;
-
-        res.json({
-            breakdown: {
-                monthlyTuition: structure.monthlyTuition,
-                admissionFee: structure.admissionFee,
-                examFee: structure.examFee
-            },
-            totalAmount: yearlyTotal
-        });
-
+        res.status(200).json(feeStructure);
     } catch (error) {
-        console.error("Get Structure Error:", error);
-        res.status(500).json({ message: "Error fetching structure" });
+        console.error('Error fetching fee structure:', error);
+        res.status(500).json({ message: 'Server error fetching fee structure' });
     }
 };
 
-// ----------------------------------------------------------------
-// 3. APPLY TO CLASS (Placeholder)
-// ----------------------------------------------------------------
-const applyToClass = async (req, res) => {
-    res.status(200).json({ message: "Applied to class" });
+// @desc    Create or update fee structure for a class
+// @route   POST /api/fee-structure/:classId
+// @access  Private/Admin
+const saveFeeStructure = async (req, res) => {
+    try {
+        const { classId } = req.params;
+        const { mandatoryFees, optionalFees, academicYear = '2026-27' } = req.body;
+
+        let feeStructure = await FeeStructure.findOne({ classId, academicYear });
+
+        if (feeStructure) {
+            // Update existing
+            feeStructure.mandatoryFees = mandatoryFees || [];
+            feeStructure.optionalFees = optionalFees || [];
+            feeStructure.lastUpdatedBy = req.user._id;
+            await feeStructure.save();
+        } else {
+            // Create new
+            feeStructure = await FeeStructure.create({
+                classId,
+                academicYear,
+                mandatoryFees: mandatoryFees || [],
+                optionalFees: optionalFees || [],
+                lastUpdatedBy: req.user._id
+            });
+        }
+
+        res.status(200).json({ message: 'Fee structure saved successfully', feeStructure });
+    } catch (error) {
+        console.error('Error saving fee structure:', error);
+        res.status(500).json({ message: 'Server error saving fee structure' });
+    }
 };
 
+
 module.exports = {
-    upsertStructure,
-    getStructureByClass,
-    applyToClass
+    getFeeStructureByClass,
+    saveFeeStructure
 };

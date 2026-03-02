@@ -1,23 +1,12 @@
 const express = require('express');
 const router = express.Router();
-
-// 1. Import Controller
-const feeStructureController = require('../controllers/feeStructureController');
-
-// 2. Import Middleware (MUST use curly braces)
+const { getFeeStructureByClass, saveFeeStructure } = require('../controllers/feeStructureController');
 const { protect, adminOnly } = require('../middleware/authMiddleware');
 
-// --- ROUTES ---
+// Get fee structure by class ID
+router.get('/:classId', protect, adminOnly, getFeeStructureByClass);
 
-// Upsert Fee Structure (Create/Edit)
-router.post('/', protect, adminOnly, feeStructureController.upsertStructure);
+// Save/Update fee structure
+router.post('/:classId', protect, adminOnly, saveFeeStructure);
 
-// Apply Fee Structure to Class
-router.post('/apply/:classId', protect, adminOnly, feeStructureController.applyToClass);
-
-// ✅ NEW: Get Structure (This was missing!)
-// This allows the frontend to fetch current fees before editing
-router.get('/:classId', protect, feeStructureController.getStructureByClass);
-
-// ✅ CORRECT EXPORT
 module.exports = router;

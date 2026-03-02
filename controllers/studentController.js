@@ -1,30 +1,51 @@
 const Student = require('../models/Student');
 
+// --- HELPER: Auto-Assign Roll Numbers Alphabetically ---
+const assignAlphabeticalRollNumbers = async (classId) => {
+  try {
+    // Fetch all students in this class, sorted by First Name -> Last Name
+    const students = await Student.find({ class: classId }).sort({ firstName: 1, lastName: 1 });
+
+    if (students.length === 0) return;
+
+    // Prepare bulkWrite operations to efficiently update all roll numbers
+    const bulkOps = students.map((student, index) => ({
+      updateOne: {
+        filter: { _id: student._id },
+        update: { $set: { rollNo: index + 1 } }
+      }
+    }));
+
+    await Student.bulkWrite(bulkOps);
+    console.log(`✅ Alphabetical Roll Numbers reassigned for Class ${classId}`);
+  } catch (error) {
+    console.error("❌ Failed to reassign Roll Numbers:", error);
+  }
+};
+
 // --- 1. Add Student (Synced with Frontend Payload) ---
 exports.addStudent = async (req, res) => {
   try {
-    const { 
-      studentId, firstName, lastName, fatherName, motherName, phone, 
-      email, address, dob, gender, bloodGroup, class: studentClass, 
-      whatsappEnabled, feeDetails, height, weight // ✅ Added height & weight
+    const {
+      firstName, lastName, fatherName, motherName, phone,
+      email, address, dob, gender, bloodGroup, class: studentClass,
+      whatsappEnabled, feeDetails, height, weight
     } = req.body;
 
     // Validation
-    if (!firstName || !studentClass || !phone || !fatherName || !studentId) {
+    if (!firstName || !studentClass || !phone || !fatherName) {
       return res.status(400).json({ message: "Required fields missing." });
     }
 
-    // Duplicate Check
-    const existing = await Student.findOne({ studentId });
-    if (existing) {
-      return res.status(400).json({ message: `Student ID ${studentId} is already in use.` });
-    }
+    // Auto-Generate secure anonymous Student ID to satisfy unique schema constraint
+    const generatedStudentId = `STU-${Date.now().toString(36).toUpperCase()}-${Math.floor(Math.random() * 1000)}`;
 
     const newStudent = new Student({
-      studentId, firstName, lastName, fatherName, motherName, phone, 
-      email, address, dob, gender, bloodGroup, class: studentClass, 
-      height, // ✅ MUST BE HERE TO SAVE TO DB
-      weight, // ✅ MUST BE HERE TO SAVE TO DB
+      studentId: generatedStudentId,
+      firstName, lastName, fatherName, motherName, phone,
+      email, address, dob, gender, bloodGroup, class: studentClass,
+      height,
+      weight,
       whatsappEnabled: whatsappEnabled ?? true,
       feeDetails: {
         backlog_2024: 0,
@@ -36,6 +57,10 @@ exports.addStudent = async (req, res) => {
     });
 
     const savedStudent = await newStudent.save();
+
+    // Trigger the Alphabetical Sorter
+    await assignAlphabeticalRollNumbers(studentClass);
+
     res.status(201).json({ success: true, message: "Student Admitted Successfully!", data: savedStudent });
 
   } catch (error) {
@@ -52,7 +77,7 @@ exports.getStudents = async (req, res) => {
   try {
     const students = await Student.find()
       .populate('class', 'grade section')
-      .sort({ firstName: 1 }); 
+      .sort({ firstName: 1 });
     res.json(students);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -64,7 +89,7 @@ exports.deleteStudent = async (req, res) => {
   try {
     const student = await Student.findById(req.params.id);
     if (!student) return res.status(404).json({ message: "Student not found" });
-    
+
     await student.deleteOne();
     res.json({ message: "Student record removed successfully" });
   } catch (error) {
@@ -89,7 +114,7 @@ exports.promoteStudent = async (req, res) => {
     const updatedStudent = await Student.findByIdAndUpdate(
       studentId,
       { class: newClassId },
-      { new: true } 
+      { new: true }
     ).populate('class');
 
     if (!updatedStudent) {
@@ -106,20 +131,20 @@ exports.promoteStudent = async (req, res) => {
 
 // --- ✅ 6. UPDATE STUDENT (REQUIRED FOR EDIT MODAL) ---
 exports.updateStudent = async (req, res) => {
-    try {
-      const updatedStudent = await Student.findByIdAndUpdate(
-        req.params.id, 
-        req.body, 
-        { new: true, runValidators: true }
-      );
-  
-      if (!updatedStudent) {
-        return res.status(404).json({ message: "Student not found" });
-      }
-  
-      res.json({ success: true, message: "Student Updated Successfully!", data: updatedStudent });
-    } catch (error) {
-      console.error("Update Student Error:", error);
-      res.status(500).json({ message: error.message || "Failed to update student" });
+  try {
+    const updatedStudent = await Student.findByIdAndUpdate(
+      req.params.id,
+      req.body,
+      { new: true, runValidators: true }
+    );
+
+    if (!updatedStudent) {
+      return res.status(404).json({ message: "Student not found" });
     }
+
+    res.json({ success: true, message: "Student Updated Successfully!", data: updatedStudent });
+  } catch (error) {
+    console.error("Update Student Error:", error);
+    res.status(500).json({ message: error.message || "Failed to update student" });
+  }
 };

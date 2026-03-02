@@ -17,13 +17,6 @@ const scheduleSchema = new mongoose.Schema({
     },
     subject: { type: String, required: true },
 
-    // Optional ID for when a regular teacher is absent
-    substituteTeacher: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'Teacher',
-        default: null
-    },
-
     color: { type: String, default: '#4285F4' } // e.g., bg-blue-500 equivalent
 }, { timestamps: true });
 

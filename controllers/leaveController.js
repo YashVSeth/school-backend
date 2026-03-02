@@ -1,5 +1,7 @@
 const LeaveRequest = require('../models/LeaveRequest');
 const Class = require('../models/Class');
+const Teacher = require('../models/Teacher');
+const TeacherSalary = require('../models/TeacherSalary');
 
 // 1. TEACHER: Apply for Leave
 exports.applyLeave = async (req, res) => {
@@ -79,6 +81,36 @@ exports.updateLeaveStatus = async (req, res) => {
 
         if (!leave) {
             return res.status(404).json({ message: "Leave request not found" });
+        }
+
+        // --- AUTOMATIC SALARY DEDUCTION LOGIC ---
+        if (status === 'Approved') {
+            const teacherDoc = await Teacher.findById(leave.teacher);
+            if (teacherDoc) {
+                const baseSalary = teacherDoc.baseSalary || 0;
+
+                // Calculate days of leave
+                const t1 = new Date(leave.startDate).getTime();
+                const t2 = new Date(leave.endDate).getTime();
+                let days = Math.ceil((t2 - t1) / (1000 * 3600 * 24)) + 1;
+                if (days < 1) days = 1;
+
+                // Provide a basic daily rate (Gross / 30 days)
+                const dailyRate = baseSalary / 30;
+                const deductionAmount = Math.round(dailyRate * days);
+
+                // Month String YYYY-MM
+                const leaveMonth = new Date(leave.startDate).toISOString().slice(0, 7);
+
+                // Insert deduction record
+                await TeacherSalary.create({
+                    teacherId: teacherDoc._id,
+                    amountPaid: deductionAmount, // Technically "amount deducted" but stored in same column to hit balance ceiling
+                    paymentType: 'Leave Deduction',
+                    month: leaveMonth,
+                    remarks: `System Auto-Deduction: Leave Approved (${days} days)`
+                });
+            }
         }
 
         res.status(200).json({ message: `Leave request ${status.toLowerCase()}`, leave });
