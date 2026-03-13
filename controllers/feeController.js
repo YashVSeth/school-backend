@@ -74,7 +74,7 @@ exports.processCartPayment = async (req, res) => {
             monthsPaid: paidInvoiceTitles,
             paymentMethod: paymentMethod || 'Cash',
             date: new Date(),
-            academicYear: '2026-27'
+            academicYear: req.body.academicYear || '2026-27'
         });
         await newTxn.save();
 
@@ -123,7 +123,7 @@ exports.collectFees = async (req, res) => {
             monthsPaid: category === 'Tuition' ? months : [category],
             paymentMethod: paymentMethod || 'Cash',
             date: new Date(),
-            academicYear: '2026-27'
+            academicYear: req.body.academicYear || '2026-27'
         });
         await newTransaction.save();
 
@@ -153,9 +153,11 @@ exports.getGlobalStats = async (req, res) => {
         const students = await Student.find(studentQuery).populate('class');
         const studentIds = students.map(s => s._id);
 
+        const academicYear = req.query.academicYear || '2026-27';
+
         // 2. Build the transaction query (Only sum money collected from THESE students)
-        let txMatch = {};
-        if (classId) txMatch = { student: { $in: studentIds } };
+        let txMatch = { academicYear };
+        if (classId) txMatch.student = { $in: studentIds };
 
         const totalCollectedResult = await Transaction.aggregate([
             { $match: txMatch },
@@ -171,7 +173,7 @@ exports.getGlobalStats = async (req, res) => {
         const lateFeesCharged = lateFeeResult.length > 0 ? lateFeeResult[0].total : 0;
 
         // 3. Calculate Dues
-        const feeStructures = await FeeStructure.find({ academicYear: '2026-27' });
+        const feeStructures = await FeeStructure.find({ academicYear });
         const feeMap = {};
 
         feeStructures.forEach(fs => {
@@ -286,7 +288,7 @@ exports.getFinanceStatus = async (req, res) => {
 
         const structure = await FeeStructure.findOne({
             classId: student.class._id,
-            academicYear: '2026-27'
+            academicYear: req.query.academicYear || '2026-27'
         });
 
         // ✅ Extract from new array schema, fallback to old schema, or 0
@@ -361,6 +363,25 @@ exports.createInvoice = async (req, res) => {
             return res.status(400).json({ message: "Title and Amount are required" });
         }
 
+        const student = await Student.findById(studentId);
+        if (!student) {
+            return res.status(404).json({ message: "Student not found." });
+        }
+
+        // --- TRANSPORT OPT-IN VALIDATION ---
+        if (title.toLowerCase().includes('transport') && student.feeDetails?.isUsingTransport !== true) {
+            return res.status(400).json({ message: "Student has not opted for School Transport facility." });
+        }
+
+        const existingInvoice = await Invoice.findOne({ student: studentId, title: title });
+        if (existingInvoice) {
+            if (existingInvoice.status === 'Paid') {
+                return res.status(400).json({ message: `An invoice for ${title} already exists and is fully paid.` });
+            }
+            // If it's Partially Paid or Pending, return the existing one so they can pay it
+            return res.status(200).json({ message: "Invoice already exists. Proceeding with pending balance.", invoice: existingInvoice });
+        }
+
         const newInvoice = new Invoice({
             student: studentId,
             title: title,
@@ -392,7 +413,8 @@ exports.generateMonthlyBills = async (req, res) => {
         let newInvoicesCount = 0;
 
         // Pre-fetch all structures into a map
-        const allStructures = await FeeStructure.find({ academicYear: '2026-27' });
+        const academicYear = req.body.academicYear || '2026-27';
+        const allStructures = await FeeStructure.find({ academicYear });
         const structureMap = {};
 
         allStructures.forEach(fs => {
@@ -469,7 +491,8 @@ exports.exportMonthlyReport = async (req, res) => {
             .lean();
 
         // Dynamically append remaining balances exactly like globalStats does it
-        const feeStructures = await FeeStructure.find({ academicYear: '2026-27' });
+        const academicYear = req.query.academicYear || '2026-27';
+        const feeStructures = await FeeStructure.find({ academicYear });
         const feeMap = {};
         feeStructures.forEach(fs => {
             if (fs.classId) {
@@ -517,7 +540,7 @@ exports.getFeeStructure = async (req, res) => {
     try {
         const structure = await FeeStructure.findOne({
             classId: req.params.classId,
-            academicYear: '2026-27'
+            academicYear: req.query.academicYear || '2026-27'
         });
 
         // If found, send it. If not, send empty arrays so frontend doesn't crash
