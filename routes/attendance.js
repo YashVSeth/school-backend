@@ -104,6 +104,44 @@ router.get('/daily', protect, async (req, res) => {
   }
 });
 
+// 2.6 GET BULK ATTENDANCE STATS FOR MULTIPLE STUDENTS
+router.get('/stats/bulk', protect, async (req, res) => {
+  try {
+    const { studentIds } = req.query;
+    if (!studentIds) return res.json({});
+
+    const ids = studentIds.split(',');
+    const allAttendance = await Attendance.find({
+      'records.student': { $in: ids }
+    });
+
+    const statsMap = {};
+    ids.forEach(id => { statsMap[id] = { present: 0, absent: 0, late: 0, total: 0, percentage: 0 }; });
+
+    allAttendance.forEach(att => {
+      att.records.forEach(rec => {
+        const sid = rec.student.toString();
+        if (statsMap[sid]) {
+          statsMap[sid].total++;
+          if (rec.status === 'Present') statsMap[sid].present++;
+          else if (rec.status === 'Absent') statsMap[sid].absent++;
+          else if (rec.status === 'Late') statsMap[sid].late++;
+        }
+      });
+    });
+
+    Object.keys(statsMap).forEach(id => {
+      const s = statsMap[id];
+      s.percentage = s.total > 0 ? Math.round(((s.present + s.late) / s.total) * 100) : 0;
+    });
+
+    res.json(statsMap);
+  } catch (err) {
+    console.error("GET /stats/bulk ERROR:", err.message);
+    res.status(500).json({ message: "Failed to fetch bulk stats" });
+  }
+});
+
 // ==========================================
 // 🏫 TEACHER ATTENDANCE ROUTES (NEW API)
 // ==========================================
