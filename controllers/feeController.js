@@ -586,6 +586,17 @@ exports.saveFeeStructure = async (req, res) => {
 exports.addFee = async (req, res) => { res.json({ message: "Placeholder" }); };
 exports.getFees = async (req, res) => { res.json([]); };
 exports.getFeeStats = async (req, res) => { res.json({ message: "Placeholder" }); };
-exports.getStudentFees = async (req, res) => { res.json({ message: "Placeholder" }); };
+exports.getStudentFees = async (req, res) => {
+    try {
+        const transactions = await Transaction.find({ student: req.params.studentId })
+            .sort({ date: -1 })
+            .limit(10)
+            .lean();
+        res.json(transactions);
+    } catch (error) {
+        console.error("Get Student Fees Error:", error);
+        res.status(500).json({ message: "Failed to fetch student fees" });
+    }
+};
 exports.archive2022Data = async (req, res) => { res.json({ message: "Placeholder" }); };
 exports.purge2022Data = async (req, res) => { res.json({ message: "Placeholder" }); };
