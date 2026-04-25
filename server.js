@@ -44,6 +44,7 @@ app.use(express.json());
 const authRoutes = require('./routes/authRoutes');
 const feeRoutes = require('./routes/feeRoutes');
 const feeStructureRoutes = require('./routes/feeStructureRoutes');
+const transportRoutes = require('./routes/transportRoutes');
 
 const classRoutes = require("./routes/classRoutes");
 const studentRoutes = require("./routes/studentRoutes");
@@ -59,6 +60,7 @@ const leaveRoutes = require('./routes/leaveRoutes');
 app.use('/api/auth', authRoutes);
 app.use('/api/fees', feeRoutes);
 app.use('/api/fee-structure', feeStructureRoutes);
+app.use('/api/transport', transportRoutes);
 app.use('/api/attendance', attendanceRoutes);
 app.use('/api/marks', markRoutes);
 app.use('/api/leaves', leaveRoutes);
