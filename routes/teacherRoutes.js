@@ -41,6 +41,10 @@ router.post('/', protect, upload.fields([
     try {
         const { email, password, ...restBody } = req.body;
 
+        if (!email || !password || !restBody.fullName) {
+            return res.status(400).json({ message: "Validation Failed: Email, Password, and Full Name are required." });
+        }
+
         // A. Check Duplicate Email
         const existing = await Teacher.findOne({ email });
         if (existing) {
