@@ -99,10 +99,23 @@ exports.addStudent = async (req, res) => {
   }
 };
 
-// --- 2. Get All Students (With Population) ---
+// --- 2. Get All Students (With Population & Search) ---
 exports.getStudents = async (req, res) => {
   try {
-    const students = await Student.find()
+    const { search } = req.query;
+    let query = {};
+    
+    if (search) {
+        query = {
+            $or: [
+                { firstName: { $regex: search, $options: 'i' } },
+                { lastName: { $regex: search, $options: 'i' } },
+                { studentId: { $regex: search, $options: 'i' } }
+            ]
+        };
+    }
+
+    const students = await Student.find(query)
       .populate('class', 'grade section')
       .sort({ firstName: 1 });
     res.json(students);
