@@ -36,4 +36,12 @@ const TeacherSchema = new mongoose.Schema({
     createdAt: { type: Date, default: Date.now }
 });
 
-module.exports = mongoose.model('Teacher', TeacherSchema);
+const Teacher = mongoose.model('Teacher', TeacherSchema);
+
+// Automatically drop the old legacy unique index for 'username' if it exists in the database
+// This prevents E11000 duplicate key errors when adding new teachers without usernames
+Teacher.collection.dropIndex('username_1').catch(err => {
+    // Index might not exist, which is fine
+});
+
+module.exports = Teacher;

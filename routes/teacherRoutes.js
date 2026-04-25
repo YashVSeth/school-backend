@@ -79,8 +79,17 @@ router.post('/', protect, upload.fields([
         res.status(201).json(savedTeacher);
 
     } catch (err) {
-        console.error("Backend Error:", err.message);
-        res.status(400).json({ message: "Validation Failed", details: err.errors });
+        console.error("Backend Error:", err);
+        
+        // Handle MongoDB Duplicate Key Error (often caused by legacy indexes like 'username_1')
+        if (err.code === 11000) {
+            const duplicateField = Object.keys(err.keyValue)[0];
+            return res.status(400).json({ 
+                message: `Duplicate Error: A teacher with this ${duplicateField} already exists. If this is 'username', you may need to manually drop the old username_1 index in MongoDB Atlas.` 
+            });
+        }
+
+        res.status(400).json({ message: err.message || "Validation Failed", details: err.errors });
     }
 });
 
