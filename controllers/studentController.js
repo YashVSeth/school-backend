@@ -54,7 +54,9 @@ exports.addStudent = async (req, res) => {
         backlog_2025: 0,
         tuitionFee_2026: 0,
         electricalCharges: 0,
-        isUsingTransport: feeDetails?.isUsingTransport || false
+        isUsingTransport: feeDetails?.isUsingTransport || false,
+        transportRoute: feeDetails?.transportRoute || "",
+        transportFee: feeDetails?.transportFee || 0
       }
     });
 
@@ -64,34 +66,23 @@ exports.addStudent = async (req, res) => {
     await assignAlphabeticalRollNumbers(studentClass);
 
     // --- AUTO-GENERATE TRANSPORT INVOICE ---
-    if (savedStudent.feeDetails?.isUsingTransport) {
+    if (savedStudent.feeDetails?.isUsingTransport && savedStudent.feeDetails?.transportFee > 0) {
       try {
+        const title = `Transport (${savedStudent.feeDetails.transportRoute})`;
         const feeStructure = await FeeStructure.findOne({ classId: studentClass }).sort({ createdAt: -1 });
-        if (feeStructure) {
-          // Look for 'Transport' in both mandatory and optional fees
-          const allFees = [...(feeStructure.mandatoryFees || []), ...(feeStructure.optionalFees || [])];
-          const transportFee = allFees.find(f => f.name.toLowerCase().includes('transport'));
 
-          if (transportFee) {
-            // Determine a title based on the frequency, or defaulting to general Transport Fee
-            let title = "Transport Fee";
-            if (transportFee.frequency === 'MONTHLY') title = "April Transport Fee"; // Just as an initial example or standard name
-            else if (transportFee.frequency === 'YEARLY') title = "Annual Transport Fee";
+        const newInvoice = new Invoice({
+          student: savedStudent._id,
+          title: title,
+          amount: savedStudent.feeDetails.transportFee,
+          dueDate: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000), // Due in 15 days
+          status: 'Pending',
+          amountPaid: 0,
+          academicYear: feeStructure ? feeStructure.academicYear : '2026-27'
+        });
 
-            const newInvoice = new Invoice({
-              student: savedStudent._id,
-              title: title,
-              amount: transportFee.amount,
-              dueDate: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000), // Due in 15 days
-              status: 'Pending',
-              amountPaid: 0,
-              academicYear: feeStructure.academicYear || '2026-27'
-            });
-
-            await newInvoice.save();
-            console.log(`✅ Auto-generated Transport Invoice for ${savedStudent.studentId}`);
-          }
-        }
+        await newInvoice.save();
+        console.log(`✅ Auto-generated Transport Invoice for ${savedStudent.studentId}`);
       } catch (err) {
         console.error("❌ Failed to auto-generate Transport invoice:", err);
       }
