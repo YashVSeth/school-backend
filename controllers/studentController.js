@@ -2,7 +2,57 @@ const Student = require('../models/Student');
 const Class = require('../models/Class');
 const FeeStructure = require('../models/FeeStructure');
 const Invoice = require('../models/Invoice');
+const cloudinary = require('cloudinary').v2;
 const { uploadToGoogleDrive } = require('../config/googleDrive');
+
+// --- HELPER: Multi-Tier Student Photo Uploader ---
+const uploadStudentPhoto = async (file) => {
+  if (!file) return null;
+
+  // 1. Try Google Drive
+  try {
+    const driveRes = await uploadToGoogleDrive(
+      file.buffer,
+      `student_${file.originalname}`,
+      file.mimetype
+    );
+    if (driveRes && driveRes.url) {
+      return driveRes.url;
+    }
+  } catch (driveErr) {
+    console.warn("⚠️ Google Drive upload notice:", driveErr.message);
+  }
+
+  // 2. Try Cloudinary fallback
+  if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY) {
+    try {
+      cloudinary.config({
+        cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+        api_key: process.env.CLOUDINARY_API_KEY,
+        api_secret: process.env.CLOUDINARY_API_SECRET
+      });
+
+      const cloudinaryUrl = await new Promise((resolve, reject) => {
+        const uploadStream = cloudinary.uploader.upload_stream(
+          { folder: 'school_management_students', resource_type: 'image' },
+          (error, result) => {
+            if (error) return reject(error);
+            resolve(result.secure_url || result.url);
+          }
+        );
+        uploadStream.end(file.buffer);
+      });
+
+      if (cloudinaryUrl) return cloudinaryUrl;
+    } catch (cloudErr) {
+      console.warn("⚠️ Cloudinary fallback notice:", cloudErr.message);
+    }
+  }
+
+  // 3. Fallback to inline Base64 Data URI (Guaranteed to always display)
+  const mime = file.mimetype || 'image/jpeg';
+  return `data:${mime};base64,${file.buffer.toString('base64')}`;
+};
 
 // --- HELPER: Auto-Assign Roll Numbers Alphabetically ---
 const assignAlphabeticalRollNumbers = async (classId) => {
@@ -41,19 +91,10 @@ exports.addStudent = async (req, res) => {
       return res.status(400).json({ message: "Required fields missing." });
     }
 
-    // Google Drive Photo Upload
+    // Photo Upload (Google Drive with Cloudinary & Data URI fallback)
     let photoUrl = photo || null;
     if (req.file) {
-      try {
-        const driveRes = await uploadToGoogleDrive(
-          req.file.buffer,
-          `student_${req.file.originalname}`,
-          req.file.mimetype
-        );
-        photoUrl = driveRes.url;
-      } catch (driveErr) {
-        console.warn("⚠️ Google Drive photo upload notice:", driveErr.message);
-      }
+      photoUrl = await uploadStudentPhoto(req.file);
     }
 
     // Auto-Generate secure anonymous Student ID to satisfy unique schema constraint
@@ -192,18 +233,9 @@ exports.updateStudent = async (req, res) => {
   try {
     const updateData = { ...req.body };
 
-    // Google Drive Photo Upload on Edit
+    // Photo Upload on Edit (Google Drive with Cloudinary & Data URI fallback)
     if (req.file) {
-      try {
-        const driveRes = await uploadToGoogleDrive(
-          req.file.buffer,
-          `student_${req.file.originalname}`,
-          req.file.mimetype
-        );
-        updateData.photo = driveRes.url;
-      } catch (driveErr) {
-        console.warn("⚠️ Google Drive photo upload notice:", driveErr.message);
-      }
+      updateData.photo = await uploadStudentPhoto(req.file);
     }
 
     const updatedStudent = await Student.findByIdAndUpdate(
