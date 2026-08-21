@@ -3,15 +3,15 @@ const router = express.Router();
 const Teacher = require('../models/Teacher');
 const { protect } = require('../middleware/authMiddleware');
 const multer = require('multer');
-const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const cloudinary = require('cloudinary').v2;
 require('dotenv').config();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { getMySchedule } = require('../controllers/teacherController');
+const { uploadToGoogleDrive } = require('../config/googleDrive');
 
 // ----------------------------------------------------------------
-// 1. CONFIGURE CLOUDINARY FILE STORAGE (✅ Best for Render/Vercel)
+// 1. CONFIGURE STORAGE & HELPERS
 // ----------------------------------------------------------------
 cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -19,16 +19,73 @@ cloudinary.config({
     api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
-const storage = new CloudinaryStorage({
-    cloudinary: cloudinary,
-    params: {
-        folder: 'school_management_teachers',
-        resource_type: 'auto',
-        allowed_formats: ['jpg', 'jpeg', 'png', 'pdf', 'doc', 'docx']
-    }
+const storage = multer.memoryStorage();
+const upload = multer({ 
+    storage: storage,
+    limits: { fileSize: 15 * 1024 * 1024 } // 15MB limit
 });
 
-const upload = multer({ storage: storage });
+// Helper to upload buffer to Cloudinary with fallback
+const uploadToCloudinary = (file, folder = 'school_management_teachers') => {
+    return new Promise((resolve, reject) => {
+        if (!process.env.CLOUDINARY_CLOUD_NAME) {
+            return resolve(null);
+        }
+        const uploadStream = cloudinary.uploader.upload_stream(
+            { folder: folder, resource_type: 'auto' },
+            (error, result) => {
+                if (error) return reject(error);
+                resolve(result.secure_url || result.url);
+            }
+        );
+        uploadStream.end(file.buffer);
+    });
+};
+
+// Helper to upload file prioritizing Google Drive for documents/resumes
+const uploadFile = async (file, prefix = 'doc', forceGoogleDrive = false) => {
+    if (!file) return null;
+
+    if (forceGoogleDrive) {
+        try {
+            const driveRes = await uploadToGoogleDrive(
+                file.buffer,
+                `${prefix}_${file.originalname}`,
+                file.mimetype
+            );
+            return driveRes.webViewLink || driveRes.url;
+        } catch (driveErr) {
+            console.warn(`⚠️ Google Drive upload notice (${prefix}):`, driveErr.message);
+            // Fallback to Cloudinary if Google Drive is not configured
+            try {
+                return await uploadToCloudinary(file);
+            } catch (cErr) {
+                console.warn('⚠️ Cloudinary fallback notice:', cErr.message);
+                return null;
+            }
+        }
+    } else {
+        // Try Cloudinary first for images, fallback to Drive
+        try {
+            const cUrl = await uploadToCloudinary(file);
+            if (cUrl) return cUrl;
+        } catch (cErr) {
+            console.warn('⚠️ Cloudinary notice:', cErr.message);
+        }
+
+        try {
+            const driveRes = await uploadToGoogleDrive(
+                file.buffer,
+                `${prefix}_${file.originalname}`,
+                file.mimetype
+            );
+            return driveRes.url;
+        } catch (driveErr) {
+            console.warn('⚠️ Google Drive notice:', driveErr.message);
+            return null;
+        }
+    }
+};
 
 // ----------------------------------------------------------------
 // 2. POST: ADD TEACHER 
@@ -62,15 +119,16 @@ router.post('/', protect, upload.fields([
             password: hashedPassword
         };
 
-        // ✅ FIXED: Using Optional Chaining to prevent crashes if a file is missing
+        // Upload files (Resume to Google Drive, Photos/ID to Cloudinary/Drive)
         if (req.files?.photo) {
-            teacherData.photo = req.files.photo[0].path;
+            teacherData.photo = await uploadFile(req.files.photo[0], 'teacher_photo', false);
         }
         if (req.files?.resume) {
-            teacherData.resume = req.files.resume[0].path;
+            // Google Drive is used for resumes
+            teacherData.resume = await uploadFile(req.files.resume[0], 'teacher_resume', true);
         }
         if (req.files?.idProof) {
-            teacherData.idProof = req.files.idProof[0].path;
+            teacherData.idProof = await uploadFile(req.files.idProof[0], 'teacher_idproof', false);
         }
 
         const newTeacher = new Teacher(teacherData);
@@ -81,11 +139,10 @@ router.post('/', protect, upload.fields([
     } catch (err) {
         console.error("Backend Error:", err);
         
-        // Handle MongoDB Duplicate Key Error (often caused by legacy indexes like 'username_1')
         if (err.code === 11000) {
             const duplicateField = Object.keys(err.keyValue)[0];
             return res.status(400).json({ 
-                message: `Duplicate Error: A teacher with this ${duplicateField} already exists. If this is 'username', you may need to manually drop the old username_1 index in MongoDB Atlas.` 
+                message: `Duplicate Error: A teacher with this ${duplicateField} already exists.` 
             });
         }
 
@@ -129,7 +186,6 @@ router.get('/my-schedule', protect, getMySchedule);
 router.put('/bulk-salary', protect, async (req, res) => {
     try {
         const { salaries } = req.body;
-        // salaries array format: [{ teacherId: "...", baseSalary: 30000 }, ...]
 
         if (!Array.isArray(salaries) || salaries.length === 0) {
             return res.status(400).json({ message: "Valid salaries array is required" });
@@ -170,10 +226,16 @@ router.put('/:id', protect, upload.fields([
             delete updates.password;
         }
 
-        // ✅ FIXED: Using Optional Chaining
-        if (req.files?.photo) updates.photo = req.files.photo[0].path;
-        if (req.files?.resume) updates.resume = req.files.resume[0].path;
-        if (req.files?.idProof) updates.idProof = req.files.idProof[0].path;
+        if (req.files?.photo) {
+            updates.photo = await uploadFile(req.files.photo[0], 'teacher_photo', false);
+        }
+        if (req.files?.resume) {
+            // Google Drive is used for resumes
+            updates.resume = await uploadFile(req.files.resume[0], 'teacher_resume', true);
+        }
+        if (req.files?.idProof) {
+            updates.idProof = await uploadFile(req.files.idProof[0], 'teacher_idproof', false);
+        }
 
         const updatedTeacher = await Teacher.findByIdAndUpdate(id, updates, { new: true });
         if (!updatedTeacher) return res.status(404).json({ message: "Teacher not found" });
@@ -183,8 +245,6 @@ router.put('/:id', protect, upload.fields([
         res.status(500).json({ message: "Error updating teacher" });
     }
 });
-
-
 
 // ----------------------------------------------------------------
 // 5. DELETE: REMOVE TEACHER 

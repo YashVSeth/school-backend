@@ -1,6 +1,7 @@
 const Student = require('../models/Student');
 const FeeStructure = require('../models/FeeStructure');
 const Invoice = require('../models/Invoice');
+const { uploadToGoogleDrive } = require('../config/googleDrive');
 
 // --- HELPER: Auto-Assign Roll Numbers Alphabetically ---
 const assignAlphabeticalRollNumbers = async (classId) => {
@@ -25,18 +26,33 @@ const assignAlphabeticalRollNumbers = async (classId) => {
   }
 };
 
-// --- 1. Add Student (Synced with Frontend Payload) ---
+// --- 1. Add Student (Synced with Frontend Payload & Google Drive Photo Upload) ---
 exports.addStudent = async (req, res) => {
   try {
     const {
       firstName, lastName, fatherName, motherName, phone,
       email, address, dob, gender, bloodGroup, class: studentClass,
-      whatsappEnabled, feeDetails, height, weight
+      whatsappEnabled, feeDetails, height, weight, photo
     } = req.body;
 
     // Validation
     if (!firstName || !studentClass || !phone || !fatherName) {
       return res.status(400).json({ message: "Required fields missing." });
+    }
+
+    // Google Drive Photo Upload
+    let photoUrl = photo || null;
+    if (req.file) {
+      try {
+        const driveRes = await uploadToGoogleDrive(
+          req.file.buffer,
+          `student_${req.file.originalname}`,
+          req.file.mimetype
+        );
+        photoUrl = driveRes.url;
+      } catch (driveErr) {
+        console.warn("⚠️ Google Drive photo upload notice:", driveErr.message);
+      }
     }
 
     // Auto-Generate secure anonymous Student ID to satisfy unique schema constraint
@@ -48,6 +64,7 @@ exports.addStudent = async (req, res) => {
       email, address, dob, gender, bloodGroup, class: studentClass,
       height,
       weight,
+      photo: photoUrl,
       whatsappEnabled: whatsappEnabled ?? true,
       feeDetails: {
         backlog_2024: 0,
@@ -172,9 +189,25 @@ exports.promoteStudent = async (req, res) => {
 // --- ✅ 6. UPDATE STUDENT (REQUIRED FOR EDIT MODAL) ---
 exports.updateStudent = async (req, res) => {
   try {
+    const updateData = { ...req.body };
+
+    // Google Drive Photo Upload on Edit
+    if (req.file) {
+      try {
+        const driveRes = await uploadToGoogleDrive(
+          req.file.buffer,
+          `student_${req.file.originalname}`,
+          req.file.mimetype
+        );
+        updateData.photo = driveRes.url;
+      } catch (driveErr) {
+        console.warn("⚠️ Google Drive photo upload notice:", driveErr.message);
+      }
+    }
+
     const updatedStudent = await Student.findByIdAndUpdate(
       req.params.id,
-      req.body,
+      updateData,
       { new: true, runValidators: true }
     );
 

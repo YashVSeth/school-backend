@@ -19,6 +19,7 @@ const StudentSchema = new mongoose.Schema({
     previousSchool: { type: String },
     height: { type: String },
     weight: { type: String },
+    photo: { type: String },
 
     // --- ACADEMIC ---
     class: {
