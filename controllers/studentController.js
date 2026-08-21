@@ -8,12 +8,14 @@ const { uploadToGoogleDrive } = require('../config/googleDrive');
 const uploadStudentPhoto = async (file) => {
   if (!file) return null;
 
-  // 1. Upload to Google Drive
+  // 1. Upload to Google Drive (Student Folder)
   try {
+    const studentFolderId = process.env.GOOGLE_DRIVE_STUDENT_FOLDER_ID || process.env.GOOGLE_DRIVE_FOLDER_ID;
     const driveRes = await uploadToGoogleDrive(
       file.buffer,
       `student_${file.originalname}`,
-      file.mimetype
+      file.mimetype,
+      studentFolderId
     );
     if (driveRes && driveRes.url) {
       return driveRes.url;

@@ -23,10 +23,12 @@ const uploadFile = async (file, prefix = 'doc') => {
     if (!file) return null;
 
     try {
+        const teacherFolderId = process.env.GOOGLE_DRIVE_TEACHER_FOLDER_ID || process.env.GOOGLE_DRIVE_FOLDER_ID;
         const driveRes = await uploadToGoogleDrive(
             file.buffer,
             `${prefix}_${file.originalname}`,
-            file.mimetype
+            file.mimetype,
+            teacherFolderId
         );
         return driveRes.url || driveRes.webViewLink;
     } catch (driveErr) {
