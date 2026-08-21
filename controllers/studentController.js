@@ -1,4 +1,5 @@
 const Student = require('../models/Student');
+const Class = require('../models/Class');
 const FeeStructure = require('../models/FeeStructure');
 const Invoice = require('../models/Invoice');
 const { uploadToGoogleDrive } = require('../config/googleDrive');
@@ -219,5 +220,123 @@ exports.updateStudent = async (req, res) => {
   } catch (error) {
     console.error("Update Student Error:", error);
     res.status(500).json({ message: error.message || "Failed to update student" });
+  }
+};
+
+// --- 7. BULK IMPORT STUDENTS FROM EXCEL ---
+exports.bulkImportStudents = async (req, res) => {
+  try {
+    const { students } = req.body;
+    if (!Array.isArray(students) || students.length === 0) {
+      return res.status(400).json({ success: false, message: "No student records provided for import." });
+    }
+
+    const classes = await Class.find({});
+    const classMap = new Map();
+    classes.forEach(c => {
+      const key1 = `${c.grade}-${c.section}`.toLowerCase().replace(/\s+/g, '');
+      const key2 = `${c.grade}`.toLowerCase().trim();
+      const key3 = `class${c.grade}-${c.section}`.toLowerCase().replace(/\s+/g, '');
+      const key4 = `class${c.grade}`.toLowerCase().trim();
+      classMap.set(key1, c._id);
+      if (!classMap.has(key2)) classMap.set(key2, c._id);
+      classMap.set(key3, c._id);
+      if (!classMap.has(key4)) classMap.set(key4, c._id);
+      classMap.set(c._id.toString(), c._id);
+    });
+
+    const fallbackClassId = classes.length > 0 ? classes[0]._id : null;
+    if (!fallbackClassId) {
+      return res.status(400).json({ success: false, message: "Please create at least one Class in the system before importing students." });
+    }
+
+    const importedStudents = [];
+    const errors = [];
+    const affectedClassIds = new Set();
+
+    for (let i = 0; i < students.length; i++) {
+      const row = students[i];
+      const rawName = String(row.fullName || row.name || `${row.firstName || ''} ${row.lastName || ''}`).trim();
+      if (!rawName) {
+        errors.push({ row: i + 1, error: "Missing student name" });
+        continue;
+      }
+
+      const nameParts = rawName.split(' ');
+      const firstName = nameParts[0];
+      const lastName = nameParts.slice(1).join(' ') || '.';
+      const phone = String(row.phone || row.mobile || row.contact || '0000000000').trim();
+      const fatherName = String(row.fatherName || row.father || 'Parent').trim();
+      const motherName = String(row.motherName || row.mother || '').trim();
+
+      // Resolve class
+      let targetClassId = fallbackClassId;
+      if (row.class || row.grade) {
+        const rawClass = String(row.class || row.grade).toLowerCase().replace(/\s+/g, '');
+        if (classMap.has(rawClass)) {
+          targetClassId = classMap.get(rawClass);
+        } else {
+          const digits = rawClass.replace(/\D/g, '');
+          if (digits && classMap.has(digits)) {
+            targetClassId = classMap.get(digits);
+          }
+        }
+      }
+
+      const studentId = row.studentId || `STU-${Date.now().toString(36).toUpperCase()}-${Math.floor(Math.random() * 10000) + i}`;
+
+      const newStudent = new Student({
+        studentId,
+        firstName,
+        lastName,
+        fatherName,
+        motherName,
+        phone,
+        email: row.email || '',
+        address: row.address || '',
+        dob: row.dob ? new Date(row.dob) : null,
+        gender: row.gender || 'Male',
+        bloodGroup: row.bloodGroup || '',
+        aadharNo: String(row.aadharNo || row.aadhar || ''),
+        previousSchool: row.previousSchool || '',
+        height: String(row.height || ''),
+        weight: String(row.weight || ''),
+        class: targetClassId,
+        whatsappEnabled: row.whatsappEnabled !== false,
+        feeDetails: {
+          backlog_2024: Number(row.backlog_2024) || 0,
+          backlog_2025: Number(row.backlog_2025) || 0,
+          tuitionFee_2026: Number(row.tuitionFee_2026) || 0,
+          electricalCharges: Number(row.electricalCharges) || 0,
+          isUsingTransport: Boolean(row.isUsingTransport || row.transportRoute),
+          transportRoute: row.transportRoute || '',
+          transportFee: Number(row.transportFee) || 0
+        }
+      });
+
+      try {
+        const saved = await newStudent.save();
+        importedStudents.push(saved);
+        affectedClassIds.add(targetClassId.toString());
+      } catch (saveErr) {
+        errors.push({ row: i + 1, name: rawName, error: saveErr.message });
+      }
+    }
+
+    // Reassign roll numbers for all affected classes
+    for (const classId of affectedClassIds) {
+      await assignAlphabeticalRollNumbers(classId);
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `Successfully imported ${importedStudents.length} students.`,
+      importedCount: importedStudents.length,
+      totalRows: students.length,
+      errors
+    });
+  } catch (error) {
+    console.error("Bulk Import Students Error:", error);
+    res.status(500).json({ success: false, message: error.message || "Bulk import failed." });
   }
 };

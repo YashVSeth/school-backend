@@ -301,4 +301,78 @@ router.post('/login', async (req, res) => {
     }
 });
 
+// ----------------------------------------------------------------
+// 7. POST: BULK IMPORT TEACHERS FROM EXCEL
+// ----------------------------------------------------------------
+router.post('/bulk-import', protect, async (req, res) => {
+    try {
+        const { teachers } = req.body;
+        if (!Array.isArray(teachers) || teachers.length === 0) {
+            return res.status(400).json({ success: false, message: "No teacher records provided for import." });
+        }
+
+        const importedTeachers = [];
+        const errors = [];
+
+        const salt = await bcrypt.genSalt(10);
+        const defaultHashedPassword = await bcrypt.hash("Teacher@123", salt);
+
+        for (let i = 0; i < teachers.length; i++) {
+            const row = teachers[i];
+            const fullName = String(row.fullName || row.name || `${row.firstName || ''} ${row.lastName || ''}`).trim();
+            if (!fullName) {
+                errors.push({ row: i + 1, error: "Missing teacher full name" });
+                continue;
+            }
+
+            const email = String(row.email || `${fullName.toLowerCase().replace(/\s+/g, '')}${Math.floor(Math.random() * 1000)}@school.com`).trim();
+            const phone = String(row.phone || row.mobile || row.contact || '').trim();
+
+            const existingTeacher = await Teacher.findOne({ email });
+            if (existingTeacher) {
+                errors.push({ row: i + 1, name: fullName, error: `Email ${email} is already registered.` });
+                continue;
+            }
+
+            let hashedPassword = defaultHashedPassword;
+            if (row.password) {
+                hashedPassword = await bcrypt.hash(String(row.password), salt);
+            }
+
+            const newTeacher = new Teacher({
+                fullName,
+                email,
+                phone,
+                password: hashedPassword,
+                gender: row.gender || 'Male',
+                qualification: row.qualification || '',
+                experience: String(row.experience || ''),
+                subjectSpecialization: row.subjectSpecialization || row.subject || '',
+                salary: Number(row.salary) || 0,
+                address: row.address || '',
+                joiningDate: row.joiningDate ? new Date(row.joiningDate) : new Date(),
+                role: 'teacher'
+            });
+
+            try {
+                const saved = await newTeacher.save();
+                importedTeachers.push(saved);
+            } catch (saveErr) {
+                errors.push({ row: i + 1, name: fullName, error: saveErr.message });
+            }
+        }
+
+        res.status(200).json({
+            success: true,
+            message: `Successfully imported ${importedTeachers.length} teachers.`,
+            importedCount: importedTeachers.length,
+            totalRows: teachers.length,
+            errors
+        });
+    } catch (error) {
+        console.error("Bulk Import Teachers Error:", error);
+        res.status(500).json({ success: false, message: error.message || "Bulk import failed." });
+    }
+});
+
 module.exports = router;
