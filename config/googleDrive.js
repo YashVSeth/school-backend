@@ -11,17 +11,20 @@ const getDriveClient = () => {
     return null;
   }
 
-  // Handle newlines in private key if passed via environment variables
-  if (privateKey.includes('\\n')) {
-    privateKey = privateKey.replace(/\\n/g, '\n');
+  // Remove surrounding quotes if present
+  if (privateKey.startsWith('"') && privateKey.endsWith('"')) {
+    privateKey = privateKey.slice(1, -1);
   }
+  // Handle literal newlines in private key
+  privateKey = privateKey.replace(/\\n/g, '\n');
 
-  const auth = new google.auth.JWT(
-    clientEmail,
-    null,
-    privateKey,
-    ['https://www.googleapis.com/auth/drive']
-  );
+  const auth = new google.auth.GoogleAuth({
+    credentials: {
+      client_email: clientEmail,
+      private_key: privateKey
+    },
+    scopes: ['https://www.googleapis.com/auth/drive']
+  });
 
   return google.drive({ version: 'v3', auth });
 };
@@ -31,7 +34,7 @@ const getDriveClient = () => {
  * @param {Buffer} fileBuffer - File buffer from multer memory storage
  * @param {string} fileName - Original or sanitized file name
  * @param {string} mimeType - File mime type (e.g. image/jpeg, application/pdf)
- * @param {string} [customFolderId] - Optional custom folder ID, defaults to process.env.GOOGLE_DRIVE_FOLDER_ID
+ * @param {string} [customFolderId] - Optional custom folder ID
  * @returns {Promise<{fileId: string, url: string, webViewLink: string}>}
  */
 const uploadToGoogleDrive = async (fileBuffer, fileName, mimeType, customFolderId = null) => {
@@ -58,11 +61,12 @@ const uploadToGoogleDrive = async (fileBuffer, fileName, mimeType, customFolderI
     body: bufferStream
   };
 
-  // Upload file
+  // Upload file with supportsAllDrives
   const response = await drive.files.create({
-    resource: fileMetadata,
+    requestBody: fileMetadata,
     media: media,
-    fields: 'id, name, webViewLink, webContentLink'
+    fields: 'id, name, webViewLink, webContentLink',
+    supportsAllDrives: true
   });
 
   const fileId = response.data.id;
@@ -74,14 +78,13 @@ const uploadToGoogleDrive = async (fileBuffer, fileName, mimeType, customFolderI
       requestBody: {
         role: 'reader',
         type: 'anyone'
-      }
+      },
+      supportsAllDrives: true
     });
   } catch (permError) {
-    console.warn('⚠️ Could not set public permission on Google Drive file:', permError.message);
+    console.warn('⚠️ Google Drive permission notice:', permError.message);
   }
 
-  // Generate direct link
-  // For images, Google's thumbnail link provides reliable direct image display
   const isImage = mimeType && mimeType.startsWith('image/');
   const directUrl = isImage
     ? `https://drive.google.com/thumbnail?id=${fileId}&sz=w1000`
