@@ -3,7 +3,6 @@ const router = express.Router();
 const Teacher = require('../models/Teacher');
 const { protect } = require('../middleware/authMiddleware');
 const multer = require('multer');
-const cloudinary = require('cloudinary').v2;
 require('dotenv').config();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
@@ -13,77 +12,30 @@ const { uploadToGoogleDrive } = require('../config/googleDrive');
 // ----------------------------------------------------------------
 // 1. CONFIGURE STORAGE & HELPERS
 // ----------------------------------------------------------------
-cloudinary.config({
-    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-    api_key: process.env.CLOUDINARY_API_KEY,
-    api_secret: process.env.CLOUDINARY_API_SECRET
-});
-
 const storage = multer.memoryStorage();
 const upload = multer({ 
     storage: storage,
     limits: { fileSize: 15 * 1024 * 1024 } // 15MB limit
 });
 
-// Helper to upload buffer to Cloudinary with fallback
-const uploadToCloudinary = (file, folder = 'school_management_teachers') => {
-    return new Promise((resolve, reject) => {
-        if (!process.env.CLOUDINARY_CLOUD_NAME) {
-            return resolve(null);
-        }
-        const uploadStream = cloudinary.uploader.upload_stream(
-            { folder: folder, resource_type: 'auto' },
-            (error, result) => {
-                if (error) return reject(error);
-                resolve(result.secure_url || result.url);
-            }
-        );
-        uploadStream.end(file.buffer);
-    });
-};
-
-// Helper to upload file prioritizing Google Drive for documents/resumes
-const uploadFile = async (file, prefix = 'doc', forceGoogleDrive = false) => {
+// Helper to upload file to Google Drive (with Base64 fallback for images)
+const uploadFile = async (file, prefix = 'doc') => {
     if (!file) return null;
 
-    if (forceGoogleDrive) {
-        try {
-            const driveRes = await uploadToGoogleDrive(
-                file.buffer,
-                `${prefix}_${file.originalname}`,
-                file.mimetype
-            );
-            return driveRes.webViewLink || driveRes.url;
-        } catch (driveErr) {
-            console.warn(`⚠️ Google Drive upload notice (${prefix}):`, driveErr.message);
-            // Fallback to Cloudinary if Google Drive is not configured
-            try {
-                return await uploadToCloudinary(file);
-            } catch (cErr) {
-                console.warn('⚠️ Cloudinary fallback notice:', cErr.message);
-                return null;
-            }
+    try {
+        const driveRes = await uploadToGoogleDrive(
+            file.buffer,
+            `${prefix}_${file.originalname}`,
+            file.mimetype
+        );
+        return driveRes.url || driveRes.webViewLink;
+    } catch (driveErr) {
+        console.warn(`⚠️ Google Drive upload notice (${prefix}):`, driveErr.message);
+        // If image, fallback to Base64 data URI
+        if (file.mimetype && file.mimetype.startsWith('image/')) {
+            return `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
         }
-    } else {
-        // Try Cloudinary first for images, fallback to Drive
-        try {
-            const cUrl = await uploadToCloudinary(file);
-            if (cUrl) return cUrl;
-        } catch (cErr) {
-            console.warn('⚠️ Cloudinary notice:', cErr.message);
-        }
-
-        try {
-            const driveRes = await uploadToGoogleDrive(
-                file.buffer,
-                `${prefix}_${file.originalname}`,
-                file.mimetype
-            );
-            return driveRes.url;
-        } catch (driveErr) {
-            console.warn('⚠️ Google Drive notice:', driveErr.message);
-            return null;
-        }
+        return null;
     }
 };
 

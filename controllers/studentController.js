@@ -2,14 +2,13 @@ const Student = require('../models/Student');
 const Class = require('../models/Class');
 const FeeStructure = require('../models/FeeStructure');
 const Invoice = require('../models/Invoice');
-const cloudinary = require('cloudinary').v2;
 const { uploadToGoogleDrive } = require('../config/googleDrive');
 
-// --- HELPER: Multi-Tier Student Photo Uploader ---
+// --- HELPER: Student Photo Uploader (Google Drive with Base64 fallback) ---
 const uploadStudentPhoto = async (file) => {
   if (!file) return null;
 
-  // 1. Try Google Drive
+  // 1. Upload to Google Drive
   try {
     const driveRes = await uploadToGoogleDrive(
       file.buffer,
@@ -23,33 +22,7 @@ const uploadStudentPhoto = async (file) => {
     console.warn("⚠️ Google Drive upload notice:", driveErr.message);
   }
 
-  // 2. Try Cloudinary fallback
-  if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY) {
-    try {
-      cloudinary.config({
-        cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-        api_key: process.env.CLOUDINARY_API_KEY,
-        api_secret: process.env.CLOUDINARY_API_SECRET
-      });
-
-      const cloudinaryUrl = await new Promise((resolve, reject) => {
-        const uploadStream = cloudinary.uploader.upload_stream(
-          { folder: 'school_management_students', resource_type: 'image' },
-          (error, result) => {
-            if (error) return reject(error);
-            resolve(result.secure_url || result.url);
-          }
-        );
-        uploadStream.end(file.buffer);
-      });
-
-      if (cloudinaryUrl) return cloudinaryUrl;
-    } catch (cloudErr) {
-      console.warn("⚠️ Cloudinary fallback notice:", cloudErr.message);
-    }
-  }
-
-  // 3. Fallback to inline Base64 Data URI (Guaranteed to always display)
+  // 2. Fallback to inline Base64 Data URI (Guaranteed to always display)
   const mime = file.mimetype || 'image/jpeg';
   return `data:${mime};base64,${file.buffer.toString('base64')}`;
 };
