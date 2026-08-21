@@ -2,31 +2,45 @@ const { google } = require('googleapis');
 const { Readable } = require('stream');
 require('dotenv').config();
 
-// Create Drive client using Service Account credentials
+// Create Drive client using either OAuth 2.0 (preferred for personal Gmail) or Service Account
 const getDriveClient = () => {
+  // 1. Check for OAuth 2.0 User Credentials (Personal 15GB Drive)
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
+
+  if (clientId && clientSecret && refreshToken) {
+    const oauth2Client = new google.auth.OAuth2(
+      clientId,
+      clientSecret,
+      'https://developers.google.com/oauthplayground'
+    );
+    oauth2Client.setCredentials({ refresh_token: refreshToken });
+    return google.drive({ version: 'v3', auth: oauth2Client });
+  }
+
+  // 2. Fallback to Service Account Credentials
   const clientEmail = process.env.GOOGLE_DRIVE_CLIENT_EMAIL;
   let privateKey = process.env.GOOGLE_DRIVE_PRIVATE_KEY;
 
-  if (!clientEmail || !privateKey) {
-    return null;
+  if (clientEmail && privateKey) {
+    if (privateKey.startsWith('"') && privateKey.endsWith('"')) {
+      privateKey = privateKey.slice(1, -1);
+    }
+    privateKey = privateKey.replace(/\\n/g, '\n');
+
+    const auth = new google.auth.GoogleAuth({
+      credentials: {
+        client_email: clientEmail,
+        private_key: privateKey
+      },
+      scopes: ['https://www.googleapis.com/auth/drive']
+    });
+
+    return google.drive({ version: 'v3', auth });
   }
 
-  // Remove surrounding quotes if present
-  if (privateKey.startsWith('"') && privateKey.endsWith('"')) {
-    privateKey = privateKey.slice(1, -1);
-  }
-  // Handle literal newlines in private key
-  privateKey = privateKey.replace(/\\n/g, '\n');
-
-  const auth = new google.auth.GoogleAuth({
-    credentials: {
-      client_email: clientEmail,
-      private_key: privateKey
-    },
-    scopes: ['https://www.googleapis.com/auth/drive']
-  });
-
-  return google.drive({ version: 'v3', auth });
+  return null;
 };
 
 /**
@@ -42,7 +56,7 @@ const uploadToGoogleDrive = async (fileBuffer, fileName, mimeType, customFolderI
 
   if (!drive) {
     throw new Error(
-      'Google Drive credentials not configured. Please set GOOGLE_DRIVE_CLIENT_EMAIL and GOOGLE_DRIVE_PRIVATE_KEY in .env'
+      'Google Drive credentials not configured. Please set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REFRESH_TOKEN in .env'
     );
   }
 
