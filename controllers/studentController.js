@@ -18,6 +18,7 @@ const uploadStudentPhoto = async (file) => {
       studentFolderId
     );
     if (driveRes && driveRes.url) {
+      console.log(`✅ Student photo uploaded to Drive: ${driveRes.url}`);
       return driveRes.url;
     }
   } catch (driveErr) {
