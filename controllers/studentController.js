@@ -279,89 +279,110 @@ exports.bulkImportStudents = async (req, res) => {
     const classMap = new Map();
 
     // Roman numeral to Arabic number converter
-    const romanToArabic = (roman) => {
-      const romanMap = {
-        'i': 1, 'ii': 2, 'iii': 3, 'iv': 4, 'v': 5,
-        'vi': 6, 'vii': 7, 'viii': 8, 'ix': 9, 'x': 10,
-        'xi': 11, 'xii': 12
-      };
-      return romanMap[roman.toLowerCase()] || null;
+    const romanMap = {
+      'i': 1, 'ii': 2, 'iii': 3, 'iv': 4, 'v': 5,
+      'vi': 6, 'vii': 7, 'viii': 8, 'ix': 9, 'x': 10,
+      'xi': 11, 'xii': 12
     };
 
-    // Normalize any class input to a canonical key
-    const normalizeClassInput = (input) => {
-      let val = String(input).toLowerCase().trim();
-      // Remove dots (L.K.G -> LKG, U.K.G -> UKG)
-      val = val.replace(/\./g, '');
-      // Remove all spaces
-      val = val.replace(/\s+/g, '');
-      // Handle "nursery" -> "nursery"
-      // Handle "class1" -> extract "1"
-      // Handle Roman numerals
-      return val;
+    // Smart class & section parser (handles "Class 6", "6th", "VI", "VIth", "Std 7", "6-A", "7B", etc.)
+    const parseClassInfo = (rawClass, rawSec = '') => {
+      let str = String(rawClass || '').trim();
+      let sec = String(rawSec || '').trim().toUpperCase();
+
+      if (!str) return { grade: '', section: sec };
+
+      const lower = str.toLowerCase().replace(/\./g, '').trim();
+
+      // Pre-primary aliases
+      if (/^nurs(ery)?$/.test(lower) || lower === 'nur') return { grade: 'Nursery', section: sec };
+      if (/^lkg$|^lowerkg$|^lowerkindergarten$|^kg1$|^kg-1$/.test(lower)) return { grade: 'LKG', section: sec };
+      if (/^ukg$|^upperkg$|^upperkindergarten$|^kg2$|^kg-2$/.test(lower)) return { grade: 'UKG', section: sec };
+      if (/^play(group)?$/.test(lower) || /^prenur(s(ery)?)?$/.test(lower)) return { grade: 'Pre-Nursery', section: sec };
+
+      // Strip common prefixes e.g. "class", "std", "standard", "grade"
+      let cleaned = str.replace(/^(class|std|standard|grade)\s*[-:]?\s*/i, '').trim();
+
+      // 1. Check for embedded section with explicit separator: e.g. '2-A', '2 A', 'VI-A', 'VI A', '6th A', '3 - B'
+      const explicitSep = cleaned.match(/^([0-9]{1,2}(?:st|nd|rd|th)?|[ivx]+(?:st|nd|rd|th)?)\s*[-/ ]\s*([a-z])$/i);
+      let gradePart = cleaned;
+      if (explicitSep) {
+        gradePart = explicitSep[1];
+        if (!sec) sec = explicitSep[2].toUpperCase();
+      } else {
+        // 2. Only allow unseparated section if it's DIGITS + single letter e.g. '2A', '2B', '3A', '6A', '10B'
+        // NOTE: NEVER split Roman numerals without a separator (e.g. 'II', 'III', 'VI', 'VII' are whole roman numerals!)
+        const digitLetter = cleaned.match(/^([0-9]{1,2}(?:st|nd|rd|th)?)\s*([a-z])$/i);
+        if (digitLetter) {
+          gradePart = digitLetter[1];
+          if (!sec) sec = digitLetter[2].toUpperCase();
+        }
+      }
+
+      // Remove ordinal suffixes e.g. 6th -> 6, 1st -> 1, 2nd -> 2, 3rd -> 3, IInd -> II, IIIrd -> III, VIth -> VI
+      const cleanGrade = gradePart.toLowerCase().replace(/(st|nd|rd|th)$/i, '').trim();
+
+      let num = null;
+      if (/^\d+$/.test(cleanGrade)) {
+        num = parseInt(cleanGrade, 10);
+      } else if (romanMap[cleanGrade]) {
+        num = romanMap[cleanGrade];
+      }
+
+      if (num && num >= 1 && num <= 12) {
+        return { grade: 'Class ' + num, section: sec };
+      }
+
+      return { grade: str, section: sec };
     };
 
-    // Extract the numeric/name part from a grade for matching
-    const extractGradeCore = (grade) => {
-      let val = String(grade).toLowerCase().trim().replace(/\./g, '').replace(/\s+/g, '');
-      // Remove "class" prefix if present
-      val = val.replace(/^class/, '');
-      return val;
+    const registerClassInMap = (c) => {
+      const cId = c._id;
+      const parsed = parseClassInfo(c.grade, c.section);
+      const gradeStr = parsed.grade;
+      const secStr = parsed.section || '';
+
+      classMap.set(cId.toString(), cId);
+
+      const keyGradeSec = `${gradeStr.toLowerCase()}-${secStr.toLowerCase()}`;
+      classMap.set(keyGradeSec, cId);
+
+      if (!secStr) {
+        classMap.set(gradeStr.toLowerCase(), cId);
+      } else {
+        if (!classMap.has(gradeStr.toLowerCase())) {
+          classMap.set(gradeStr.toLowerCase(), cId);
+        }
+      }
+
+      const numMatch = gradeStr.match(/\d+/);
+      if (numMatch) {
+        const num = numMatch[0];
+        const numSecKey = `${num}-${secStr.toLowerCase()}`;
+        classMap.set(numSecKey, cId);
+        if (!secStr && !classMap.has(num)) classMap.set(num, cId);
+        if (!classMap.has(`class${num}`)) classMap.set(`class${num}`, cId);
+        if (!classMap.has(`class ${num}`)) classMap.set(`class ${num}`, cId);
+        if (!classMap.has(`${num}th`)) classMap.set(`${num}th`, cId);
+
+        for (const [r, arabic] of Object.entries(romanMap)) {
+          if (arabic === parseInt(num, 10)) {
+            if (!secStr && !classMap.has(r)) classMap.set(r, cId);
+            if (!classMap.has(`class${r}`)) classMap.set(`class${r}`, cId);
+            if (!classMap.has(`class ${r}`)) classMap.set(`class ${r}`, cId);
+            if (!classMap.has(`${r}th`)) classMap.set(`${r}th`, cId);
+          }
+        }
+      }
+
+      const rawGradeNorm = String(c.grade).toLowerCase().replace(/\s+/g, '').replace(/\./g, '');
+      if (!classMap.has(rawGradeNorm)) classMap.set(rawGradeNorm, cId);
+      if (secStr) {
+        classMap.set(`${rawGradeNorm}-${secStr.toLowerCase()}`, cId);
+      }
     };
 
-    classes.forEach(c => {
-      const gradeRaw = c.grade;
-      const section = (c.section || '').trim();
-      const gradeCore = extractGradeCore(gradeRaw); // e.g., "Class 1" -> "1", "LKG" -> "lkg"
-
-      // Store by ID
-      classMap.set(c._id.toString(), c._id);
-
-      // If section exists, store full grade-section combos
-      if (section) {
-        const fullNorm = normalizeClassInput(`${gradeRaw}-${section}`); // "class1-a"
-        const fullNormNoClass = `${gradeCore}-${section.toLowerCase()}`; // "1-a"
-        classMap.set(fullNorm, c._id);
-        classMap.set(fullNormNoClass, c._id);
-      }
-
-      // Grade only (first match wins for grade-only lookups)
-      if (!classMap.has(gradeCore)) classMap.set(gradeCore, c._id);
-
-      // Exact grade normalized
-      const exactNorm = normalizeClassInput(gradeRaw);
-      if (!classMap.has(exactNorm)) classMap.set(exactNorm, c._id);
-
-      // Numeric-only version (e.g., "Class 2" -> "2")
-      const digits = gradeCore.replace(/\D/g, '');
-      if (digits && !classMap.has(digits)) classMap.set(digits, c._id);
-
-      // "class" + digits version (e.g., "class2")
-      if (digits) {
-        const classDigits = `class${digits}`;
-        if (!classMap.has(classDigits)) classMap.set(classDigits, c._id);
-      }
-
-      // Handle common aliases
-      const lowerGrade = gradeRaw.toLowerCase().trim();
-      if (lowerGrade.includes('nursery') || lowerGrade === 'nur') {
-        ['nursery', 'nur', 'nurs'].forEach(alias => {
-          if (!classMap.has(alias)) classMap.set(alias, c._id);
-        });
-      }
-      if (lowerGrade.includes('lkg') || lowerGrade === 'l.k.g' || lowerGrade === 'l.k.g.') {
-        ['lkg', 'l.k.g', 'l.k.g.', 'lowerkindergarten', 'lowerkg'].forEach(alias => {
-          const norm = alias.replace(/\./g, '').replace(/\s+/g, '');
-          if (!classMap.has(norm)) classMap.set(norm, c._id);
-        });
-      }
-      if (lowerGrade.includes('ukg') || lowerGrade === 'u.k.g' || lowerGrade === 'u.k.g.') {
-        ['ukg', 'u.k.g', 'u.k.g.', 'upperkindergarten', 'upperkg'].forEach(alias => {
-          const norm = alias.replace(/\./g, '').replace(/\s+/g, '');
-          if (!classMap.has(norm)) classMap.set(norm, c._id);
-        });
-      }
-    });
+    classes.forEach(registerClassInMap);
 
     const fallbackClassId = classes.length > 0 ? classes[0]._id : null;
     if (!fallbackClassId) {
@@ -369,6 +390,17 @@ exports.bulkImportStudents = async (req, res) => {
     }
 
     // ─── FAIL-CHECK & DUPLICATE DETECTION SYSTEM ───
+    const isGenericFather = (f) => {
+      const norm = String(f || '').toLowerCase().trim().replace(/[^a-z0-9]/g, '');
+      return !norm || norm === 'parent' || norm === 'father' || norm === 'na' || norm === 'none' || norm === 'unknown' || norm.length < 3;
+    };
+
+    const isDummyPhone = (p) => {
+      if (!p) return true;
+      const digits = String(p).replace(/\D/g, '');
+      return digits === '' || /^0+$/.test(digits) || /^9+$/.test(digits) || /^1+$/.test(digits) || digits === '1234567890';
+    };
+
     // Build quick in-memory lookup sets from existing students
     const existingStudents = await Student.find({}, 'firstName lastName fatherName class phone aadharNo studentId');
     const existingStudentSet = new Set();
@@ -385,14 +417,16 @@ exports.bulkImportStudents = async (req, res) => {
 
       if (fan) {
         existingStudentSet.add(`${fn}|${fan}|${cid}`);
-        existingStudentSet.add(`${fnOnly}|${fan}|${cid}`);
+        if (!isGenericFather(fan) && fnOnly.length > 2) {
+          existingStudentSet.add(`${fnOnly}|${fan}|${cid}`);
+        }
       }
 
       if (s.aadharNo && s.aadharNo.trim()) {
         existingAadharSet.add(s.aadharNo.trim());
       }
 
-      if (s.phone && s.phone !== '0000000000') {
+      if (!isDummyPhone(s.phone)) {
         existingPhoneNameSet.add(`${fnOnly}|${s.phone.trim()}`);
       }
     });
@@ -455,25 +489,63 @@ exports.bulkImportStudents = async (req, res) => {
       const fatherName = String(row.fatherName || row.father || 'Parent').trim();
       const motherName = String(row.motherName || row.mother || '').trim();
 
-      // Resolve class with smart matching
-      let targetClassId = fallbackClassId;
-      if (row.class || row.grade) {
-        let rawClass = String(row.class || row.grade).trim();
-        let normalized = normalizeClassInput(rawClass);
+      // Resolve class with smart matching & auto-creation
+      const rawClassVal = row.class || row.grade || row.standard || row.std || row.className || row.studentClass || '';
+      const rawSecVal = row.section || row.sec || '';
 
-        if (classMap.has(normalized)) {
-          targetClassId = classMap.get(normalized);
+      const parsedClass = parseClassInfo(rawClassVal, rawSecVal);
+      let targetClassId = null;
+
+      if (parsedClass.grade) {
+        const fullKey = `${parsedClass.grade.toLowerCase()}-${(parsedClass.section || '').toLowerCase()}`;
+        const gradeKey = parsedClass.grade.toLowerCase();
+
+        if (classMap.has(fullKey)) {
+          targetClassId = classMap.get(fullKey);
+        } else if (classMap.has(gradeKey)) {
+          targetClassId = classMap.get(gradeKey);
         } else {
-          const romanNum = romanToArabic(normalized);
-          if (romanNum && classMap.has(String(romanNum))) {
-            targetClassId = classMap.get(String(romanNum));
-          } else {
-            const digits = normalized.replace(/\D/g, '');
-            if (digits && classMap.has(digits)) {
-              targetClassId = classMap.get(digits);
-            }
+          const numMatch = parsedClass.grade.match(/\d+/);
+          if (numMatch && classMap.has(numMatch[0])) {
+            targetClassId = classMap.get(numMatch[0]);
           }
         }
+
+        // Auto-create class if not existing yet (e.g. Class 7, Class 8)
+        if (!targetClassId) {
+          try {
+            let existingInDb = await Class.findOne({
+              grade: new RegExp(`^${parsedClass.grade}$`, 'i'),
+              ...(parsedClass.section ? { section: new RegExp(`^${parsedClass.section}$`, 'i') } : {})
+            });
+
+            if (!existingInDb && !parsedClass.section) {
+              existingInDb = await Class.findOne({
+                grade: new RegExp(`^${parsedClass.grade}$`, 'i')
+              });
+            }
+
+            if (existingInDb) {
+              registerClassInMap(existingInDb);
+              targetClassId = existingInDb._id;
+            } else {
+              const newClass = await Class.create({
+                grade: parsedClass.grade,
+                section: parsedClass.section || '',
+                feeStructure: { monthlyFee: 0, yearlyFee: 0 },
+                subjects: []
+              });
+              registerClassInMap(newClass);
+              targetClassId = newClass._id;
+            }
+          } catch (createErr) {
+            console.error("Error auto-creating class:", createErr);
+          }
+        }
+      }
+
+      if (!targetClassId) {
+        targetClassId = fallbackClassId;
       }
 
       // ─── DUPLICATE / REJECTION CHECK ───
@@ -485,13 +557,15 @@ exports.bulkImportStudents = async (req, res) => {
       const aadharClean = String(row.aadharNo || row.aadhar || '').trim();
 
       let rejectReason = null;
-      if (existingStudentSet.has(studentClassKey) || existingStudentSet.has(studentClassKeyShort)) {
+      const isSpecificFather = !isGenericFather(normFather) && normFather.length > 2;
+
+      if (existingStudentSet.has(studentClassKey) || (isSpecificFather && existingStudentSet.has(studentClassKeyShort))) {
         rejectReason = `Already enrolled in this class with same name and father's name.`;
-      } else if (inBatchSeenKeys.has(studentClassKey) || inBatchSeenKeys.has(studentClassKeyShort)) {
+      } else if (inBatchSeenKeys.has(studentClassKey) || (isSpecificFather && inBatchSeenKeys.has(studentClassKeyShort))) {
         rejectReason = `Duplicate: Appears multiple times in this uploaded file.`;
       } else if (aadharClean && (existingAadharSet.has(aadharClean) || inBatchAadhars.has(aadharClean))) {
         rejectReason = `Aadhar Number (${aadharClean}) is already registered to an existing student.`;
-      } else if (phone && phone !== '0000000000' && existingPhoneNameSet.has(`${normFirstName}|${phone}`)) {
+      } else if (!isDummyPhone(phone) && existingPhoneNameSet.has(`${normFirstName}|${phone}`)) {
         rejectReason = `Student with same name and mobile (${phone}) already registered.`;
       }
 
@@ -508,11 +582,17 @@ exports.bulkImportStudents = async (req, res) => {
 
       // Mark as seen in this batch
       inBatchSeenKeys.add(studentClassKey);
-      inBatchSeenKeys.add(studentClassKeyShort);
+      if (isSpecificFather) inBatchSeenKeys.add(studentClassKeyShort);
       if (aadharClean) inBatchAadhars.add(aadharClean);
-      if (phone && phone !== '0000000000') existingPhoneNameSet.add(`${normFirstName}|${phone}`);
+      if (!isDummyPhone(phone)) existingPhoneNameSet.add(`${normFirstName}|${phone}`);
 
       const studentId = row.studentId || `STU-${Date.now().toString(36).toUpperCase()}-${Math.floor(Math.random() * 10000) + i}`;
+
+      let parsedDob = null;
+      if (row.dob) {
+        const d = new Date(row.dob);
+        if (!isNaN(d.getTime())) parsedDob = d;
+      }
 
       const newStudent = new Student({
         studentId,
@@ -523,7 +603,7 @@ exports.bulkImportStudents = async (req, res) => {
         phone,
         email: row.email || '',
         address: row.address || '',
-        dob: row.dob ? new Date(row.dob) : null,
+        dob: parsedDob,
         gender: row.gender || 'Male',
         bloodGroup: row.bloodGroup || '',
         aadharNo: String(row.aadharNo || row.aadhar || ''),

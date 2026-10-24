@@ -1,5 +1,7 @@
 const FeeStructure = require('../models/FeeStructure');
 const Class = require('../models/Class');
+const Student = require('../models/Student');
+const Invoice = require('../models/Invoice');
 
 // Helper to normalize frequency strings
 const normalizeFrequency = (freq) => {
@@ -26,17 +28,35 @@ const cleanFeeItems = (items) => {
         }));
 };
 
+// Natural grade order comparator
+const gradeOrder = (grade) => {
+    if (!grade) return 999;
+    const g = grade.toString().toLowerCase().trim();
+    if (g.includes('play') || g.includes('pg')) return 1;
+    if (g.includes('nur')) return 2;
+    if (g.includes('lkg')) return 3;
+    if (g.includes('ukg') || g.includes('kg')) return 4;
+    const match = g.match(/\d+/);
+    if (match) return 10 + parseInt(match[0], 10);
+    const romanMap = { i: 11, ii: 12, iii: 13, iv: 14, v: 15, vi: 16, vii: 17, viii: 18, ix: 19, x: 20, xi: 21, xii: 22 };
+    const rMatch = g.replace(/class/g, '').trim();
+    if (romanMap[rMatch]) return romanMap[rMatch];
+    return 100;
+};
+
 // @desc    Get all fee structures for an academic year (Single Batch Query)
 // @route   GET /api/fee-structure/all
 // @access  Private/Admin
 const getAllFeeStructures = async (req, res) => {
     try {
         const academicYear = req.query.academicYear || '2026-27';
-        
-        const [structures, classes] = await Promise.all([
+
+        const [structures, rawClasses] = await Promise.all([
             FeeStructure.find({ academicYear }).populate('classId', 'grade section').lean(),
-            Class.find({}).select('grade section').sort({ grade: 1 }).lean()
+            Class.find({}).select('grade section').lean()
         ]);
+
+        const classes = [...rawClasses].sort((a, b) => gradeOrder(a.grade) - gradeOrder(b.grade));
 
         const structureMap = {};
         structures.forEach(fs => {
@@ -183,9 +203,77 @@ const copyFeeStructure = async (req, res) => {
     }
 };
 
+// @desc    Apply fee structure to all students in a class
+// @route   POST /api/fee-structure/apply/:classId
+// @access  Private/Admin
+const applyFeeStructureToClass = async (req, res) => {
+    try {
+        const { classId } = req.params;
+        const academicYear = req.body?.academicYear || '2026-27';
+
+        const [structure, students] = await Promise.all([
+            FeeStructure.findOne({ classId, academicYear }),
+            Student.find({ class: classId, status: 'active' })
+        ]);
+
+        if (!structure) {
+            return res.status(404).json({ message: 'No fee structure found for this class and academic year.' });
+        }
+
+        let invoicesCreated = 0;
+        let studentsUpdated = 0;
+
+        for (const student of students) {
+            // Generate invoices for mandatory fee items if not already generated
+            for (const item of (structure.mandatoryFees || [])) {
+                if (item.amount <= 0) continue;
+
+                const existingInvoice = await Invoice.findOne({
+                    student: student._id,
+                    title: item.name,
+                    academicYear
+                });
+
+                if (!existingInvoice) {
+                    await Invoice.create({
+                        student: student._id,
+                        title: item.name,
+                        amount: item.amount,
+                        dueDate: new Date(),
+                        academicYear,
+                        status: 'Unpaid'
+                    });
+                    invoicesCreated++;
+                }
+            }
+
+            // Sync tuition fee in student's feeDetails if tuition exists
+            const tuitionItem = (structure.mandatoryFees || []).find(f => f.name.toLowerCase().includes('tuition'));
+            if (tuitionItem && student.feeDetails) {
+                student.feeDetails.tuitionFee_2026 = tuitionItem.amount;
+                student.markModified('feeDetails');
+                await student.save();
+                studentsUpdated++;
+            }
+        }
+
+        res.status(200).json({
+            success: true,
+            message: `Fee structure deployed to ${students.length} students! Generated ${invoicesCreated} invoices.`,
+            studentsCount: students.length,
+            invoicesCreated,
+            studentsUpdated
+        });
+    } catch (error) {
+        console.error('Error applying fee structure:', error);
+        res.status(500).json({ message: 'Server error applying fee structure to students' });
+    }
+};
+
 module.exports = {
     getAllFeeStructures,
     getFeeStructureByClass,
     saveFeeStructure,
-    copyFeeStructure
+    copyFeeStructure,
+    applyFeeStructureToClass
 };

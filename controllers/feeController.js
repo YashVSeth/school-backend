@@ -882,17 +882,39 @@ exports.saveFeeStructure = async (req, res) => {
         const { classId, mandatoryFees, optionalFees, academicYear } = req.body;
         const year = academicYear || '2026-27';
 
+        const normalizeFreq = (freq) => {
+            if (!freq) return 'MONTHLY';
+            const up = freq.toString().toUpperCase().trim();
+            if (up === 'MONTHLY' || up === 'QUARTERLY' || up === 'HALF-YEARLY' || up === 'YEARLY' || up === 'ONE-TIME') return up;
+            if (up === 'ONE-TIME' || up === 'ONETIME' || up === 'ONE_TIME' || up === 'ONE TIME') return 'ONE-TIME';
+            if (up === 'HALF YEARLY' || up === 'HALFYEARLY' || up === 'HALF_YEARLY') return 'HALF-YEARLY';
+            return 'MONTHLY';
+        };
+
+        const cleanList = (arr) => {
+            if (!Array.isArray(arr)) return [];
+            return arr.filter(i => i && i.name && i.name.trim() !== '').map(i => ({
+                name: i.name.trim(),
+                desc: i.desc || '',
+                frequency: normalizeFreq(i.frequency),
+                amount: Math.max(0, Number(i.amount) || 0)
+            }));
+        };
+
+        const cleanedMandatory = cleanList(mandatoryFees);
+        const cleanedOptional = cleanList(optionalFees);
+
         let structure = await FeeStructure.findOne({ classId, academicYear: year });
 
         if (structure) {
-            structure.mandatoryFees = mandatoryFees;
-            structure.optionalFees = optionalFees;
+            structure.mandatoryFees = cleanedMandatory;
+            structure.optionalFees = cleanedOptional;
             await structure.save();
         } else {
             structure = await FeeStructure.create({
                 classId,
-                mandatoryFees,
-                optionalFees,
+                mandatoryFees: cleanedMandatory,
+                optionalFees: cleanedOptional,
                 academicYear: year
             });
         }
