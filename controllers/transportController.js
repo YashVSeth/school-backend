@@ -1,11 +1,15 @@
 const TransportRoute = require('../models/TransportRoute');
 
-// @desc    Get all transport routes
+// @desc    Get all transport routes (with optional zone filter)
 // @route   GET /api/transport
 // @access  Private
 exports.getRoutes = async (req, res) => {
     try {
-        const routes = await TransportRoute.find().sort({ placeName: 1 });
+        const { zone } = req.query;
+        let query = {};
+        if (zone) query.zone = zone;
+
+        const routes = await TransportRoute.find(query).sort({ zone: 1, placeName: 1 }).lean();
         res.status(200).json(routes);
     } catch (err) {
         console.error("Error fetching transport routes:", err);
@@ -17,19 +21,24 @@ exports.getRoutes = async (req, res) => {
 // @route   POST /api/transport
 // @access  Private (Admin only)
 exports.addRoute = async (req, res) => {
-    const { placeName, fare } = req.body;
+    const { placeName, fare, zone, distanceKm } = req.body;
 
     if (!placeName || fare === undefined) {
         return res.status(400).json({ message: "Place name and fare are required" });
     }
 
     try {
-        const existingRoute = await TransportRoute.findOne({ placeName: { $regex: new RegExp(`^${placeName}$`, 'i') } });
+        const existingRoute = await TransportRoute.findOne({ placeName: { $regex: new RegExp(`^${placeName.trim()}$`, 'i') } });
         if (existingRoute) {
             return res.status(400).json({ message: "A route with this place name already exists" });
         }
 
-        const route = await TransportRoute.create({ placeName, fare });
+        const route = await TransportRoute.create({
+            placeName: placeName.trim(),
+            fare: Number(fare),
+            zone: zone || 'Zone 1 (0-3 km)',
+            distanceKm: Number(distanceKm) || 0
+        });
         res.status(201).json(route);
     } catch (err) {
         console.error("Error adding transport route:", err);

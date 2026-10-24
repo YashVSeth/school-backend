@@ -4,33 +4,44 @@ const invoiceSchema = new mongoose.Schema({
   student: { 
     type: mongoose.Schema.Types.ObjectId, 
     ref: 'Student', 
-    required: true 
+    required: true,
+    index: true
   },
   title: { 
     type: String, 
-    required: true 
+    required: true,
+    trim: true
   },
   amount: { 
     type: Number, 
-    required: true 
+    required: true,
+    min: 0
   },
   amountPaid: { 
     type: Number, 
-    default: 0 
+    default: 0,
+    min: 0
   },
   status: { 
     type: String, 
     enum: ['Unpaid', 'Partially Paid', 'Paid'], 
-    default: 'Unpaid' 
+    default: 'Unpaid',
+    index: true
   },
   dueDate: { 
     type: Date,
-    default: Date.now
+    default: Date.now,
+    index: true
   },
   academicYear: {
     type: String,
-    default: '2026-27'
+    default: '2026-27',
+    index: true
   }
 }, { timestamps: true });
+
+invoiceSchema.index({ student: 1, status: 1 });
+invoiceSchema.index({ academicYear: 1, status: 1 });
+invoiceSchema.index({ student: 1, title: 1, academicYear: 1 });
 
 module.exports = mongoose.model('Invoice', invoiceSchema);

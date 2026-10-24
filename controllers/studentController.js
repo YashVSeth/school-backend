@@ -33,12 +33,15 @@ const uploadStudentPhoto = async (file) => {
 // --- HELPER: Auto-Assign Roll Numbers Alphabetically ---
 const assignAlphabeticalRollNumbers = async (classId) => {
   try {
-    // Fetch all students in this class, sorted by First Name -> Last Name
-    const students = await Student.find({ class: classId }).sort({ firstName: 1, lastName: 1 });
+    if (!classId) return;
+    // Fetch all students in this class, sorted alphabetically by First Name -> Last Name (case-insensitive)
+    const students = await Student.find({ class: classId })
+      .collation({ locale: 'en', strength: 2 })
+      .sort({ firstName: 1, lastName: 1 });
 
     if (students.length === 0) return;
 
-    // Prepare bulkWrite operations to efficiently update all roll numbers
+    // Prepare bulkWrite operations to efficiently update all roll numbers class-wise (1, 2, 3...)
     const bulkOps = students.map((student, index) => ({
       updateOne: {
         filter: { _id: student._id },
@@ -47,7 +50,7 @@ const assignAlphabeticalRollNumbers = async (classId) => {
     }));
 
     await Student.bulkWrite(bulkOps);
-    console.log(`✅ Alphabetical Roll Numbers reassigned for Class ${classId}`);
+    console.log(`✅ Alphabetical Roll Numbers (1 to ${students.length}) assigned for Class ${classId}`);
   } catch (error) {
     console.error("❌ Failed to reassign Roll Numbers:", error);
   }
@@ -134,25 +137,58 @@ exports.addStudent = async (req, res) => {
   }
 };
 
-// --- 2. Get All Students (With Population & Search) ---
+// --- 2. Get All Students (With Population, Class Filter & Search) ---
 exports.getStudents = async (req, res) => {
   try {
-    const { search } = req.query;
+    const { search, classId, class: classParam, grade, status } = req.query;
     let query = {};
-    
-    if (search) {
-        query = {
-            $or: [
-                { firstName: { $regex: search, $options: 'i' } },
-                { lastName: { $regex: search, $options: 'i' } },
-                { studentId: { $regex: search, $options: 'i' } }
-            ]
-        };
+
+    // Auto-allot class-wise alphabetical roll numbers if any student has no roll number
+    const unassignedCount = await Student.countDocuments({
+      $or: [{ rollNo: null }, { rollNo: { $exists: false } }]
+    });
+
+    if (unassignedCount > 0) {
+      const allClassIds = await Student.distinct('class');
+      for (const cId of allClassIds.filter(Boolean)) {
+        await assignAlphabeticalRollNumbers(cId);
+      }
+    }
+
+    // 1. Status Filter
+    if (status) {
+      query.status = status;
+    }
+
+    // 2. Class Filter (by class ObjectId or Grade string)
+    const targetClassId = classId || classParam;
+    if (targetClassId && targetClassId !== 'all' && targetClassId !== '') {
+      query.class = targetClassId;
+    } else if (grade) {
+      const matchedClasses = await Class.find({ grade: { $regex: grade, $options: 'i' } }).select('_id');
+      if (matchedClasses.length > 0) {
+        query.class = { $in: matchedClasses.map(c => c._id) };
+      }
+    }
+
+    // 3. Search Filter
+    if (search && search.trim() !== '') {
+      const q = search.trim();
+      const orConditions = [
+        { firstName: { $regex: q, $options: 'i' } },
+        { lastName: { $regex: q, $options: 'i' } },
+        { studentId: { $regex: q, $options: 'i' } }
+      ];
+      if (!isNaN(q) && q !== '') {
+        orConditions.push({ rollNo: Number(q) });
+      }
+      query.$or = orConditions;
     }
 
     const students = await Student.find(query)
       .populate('class', 'grade section')
-      .sort({ firstName: 1 });
+      .sort({ rollNo: 1, firstName: 1 });
+
     res.json(students);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -241,16 +277,90 @@ exports.bulkImportStudents = async (req, res) => {
 
     const classes = await Class.find({});
     const classMap = new Map();
+
+    // Roman numeral to Arabic number converter
+    const romanToArabic = (roman) => {
+      const romanMap = {
+        'i': 1, 'ii': 2, 'iii': 3, 'iv': 4, 'v': 5,
+        'vi': 6, 'vii': 7, 'viii': 8, 'ix': 9, 'x': 10,
+        'xi': 11, 'xii': 12
+      };
+      return romanMap[roman.toLowerCase()] || null;
+    };
+
+    // Normalize any class input to a canonical key
+    const normalizeClassInput = (input) => {
+      let val = String(input).toLowerCase().trim();
+      // Remove dots (L.K.G -> LKG, U.K.G -> UKG)
+      val = val.replace(/\./g, '');
+      // Remove all spaces
+      val = val.replace(/\s+/g, '');
+      // Handle "nursery" -> "nursery"
+      // Handle "class1" -> extract "1"
+      // Handle Roman numerals
+      return val;
+    };
+
+    // Extract the numeric/name part from a grade for matching
+    const extractGradeCore = (grade) => {
+      let val = String(grade).toLowerCase().trim().replace(/\./g, '').replace(/\s+/g, '');
+      // Remove "class" prefix if present
+      val = val.replace(/^class/, '');
+      return val;
+    };
+
     classes.forEach(c => {
-      const key1 = `${c.grade}-${c.section}`.toLowerCase().replace(/\s+/g, '');
-      const key2 = `${c.grade}`.toLowerCase().trim();
-      const key3 = `class${c.grade}-${c.section}`.toLowerCase().replace(/\s+/g, '');
-      const key4 = `class${c.grade}`.toLowerCase().trim();
-      classMap.set(key1, c._id);
-      if (!classMap.has(key2)) classMap.set(key2, c._id);
-      classMap.set(key3, c._id);
-      if (!classMap.has(key4)) classMap.set(key4, c._id);
+      const gradeRaw = c.grade;
+      const section = (c.section || '').trim();
+      const gradeCore = extractGradeCore(gradeRaw); // e.g., "Class 1" -> "1", "LKG" -> "lkg"
+
+      // Store by ID
       classMap.set(c._id.toString(), c._id);
+
+      // If section exists, store full grade-section combos
+      if (section) {
+        const fullNorm = normalizeClassInput(`${gradeRaw}-${section}`); // "class1-a"
+        const fullNormNoClass = `${gradeCore}-${section.toLowerCase()}`; // "1-a"
+        classMap.set(fullNorm, c._id);
+        classMap.set(fullNormNoClass, c._id);
+      }
+
+      // Grade only (first match wins for grade-only lookups)
+      if (!classMap.has(gradeCore)) classMap.set(gradeCore, c._id);
+
+      // Exact grade normalized
+      const exactNorm = normalizeClassInput(gradeRaw);
+      if (!classMap.has(exactNorm)) classMap.set(exactNorm, c._id);
+
+      // Numeric-only version (e.g., "Class 2" -> "2")
+      const digits = gradeCore.replace(/\D/g, '');
+      if (digits && !classMap.has(digits)) classMap.set(digits, c._id);
+
+      // "class" + digits version (e.g., "class2")
+      if (digits) {
+        const classDigits = `class${digits}`;
+        if (!classMap.has(classDigits)) classMap.set(classDigits, c._id);
+      }
+
+      // Handle common aliases
+      const lowerGrade = gradeRaw.toLowerCase().trim();
+      if (lowerGrade.includes('nursery') || lowerGrade === 'nur') {
+        ['nursery', 'nur', 'nurs'].forEach(alias => {
+          if (!classMap.has(alias)) classMap.set(alias, c._id);
+        });
+      }
+      if (lowerGrade.includes('lkg') || lowerGrade === 'l.k.g' || lowerGrade === 'l.k.g.') {
+        ['lkg', 'l.k.g', 'l.k.g.', 'lowerkindergarten', 'lowerkg'].forEach(alias => {
+          const norm = alias.replace(/\./g, '').replace(/\s+/g, '');
+          if (!classMap.has(norm)) classMap.set(norm, c._id);
+        });
+      }
+      if (lowerGrade.includes('ukg') || lowerGrade === 'u.k.g' || lowerGrade === 'u.k.g.') {
+        ['ukg', 'u.k.g', 'u.k.g.', 'upperkindergarten', 'upperkg'].forEach(alias => {
+          const norm = alias.replace(/\./g, '').replace(/\s+/g, '');
+          if (!classMap.has(norm)) classMap.set(norm, c._id);
+        });
+      }
     });
 
     const fallbackClassId = classes.length > 0 ? classes[0]._id : null;
@@ -258,13 +368,65 @@ exports.bulkImportStudents = async (req, res) => {
       return res.status(400).json({ success: false, message: "Please create at least one Class in the system before importing students." });
     }
 
+    // ─── FAIL-CHECK & DUPLICATE DETECTION SYSTEM ───
+    // Build quick in-memory lookup sets from existing students
+    const existingStudents = await Student.find({}, 'firstName lastName fatherName class phone aadharNo studentId');
+    const existingStudentSet = new Set();
+    const existingAadharSet = new Set();
+    const existingPhoneNameSet = new Set();
+
+    const normalizeText = (text) => String(text || '').trim().toLowerCase().replace(/\s+/g, '');
+
+    existingStudents.forEach(s => {
+      const fn = normalizeText(`${s.firstName} ${s.lastName || ''}`);
+      const fnOnly = normalizeText(s.firstName);
+      const fan = normalizeText(s.fatherName);
+      const cid = String(s.class || '').trim();
+
+      if (fan) {
+        existingStudentSet.add(`${fn}|${fan}|${cid}`);
+        existingStudentSet.add(`${fnOnly}|${fan}|${cid}`);
+      }
+
+      if (s.aadharNo && s.aadharNo.trim()) {
+        existingAadharSet.add(s.aadharNo.trim());
+      }
+
+      if (s.phone && s.phone !== '0000000000') {
+        existingPhoneNameSet.add(`${fnOnly}|${s.phone.trim()}`);
+      }
+    });
+
+    const inBatchSeenKeys = new Set();
+    const inBatchAadhars = new Set();
     const importedStudents = [];
+    const rejected = [];
     const errors = [];
     const affectedClassIds = new Set();
 
+    // Helper phone cleaner
+    const cleanPhone = (val) => {
+      if (!val) return '';
+      let s = String(val).trim();
+      if (/e[+-]?\d+/i.test(s)) {
+        const num = Number(s);
+        if (!isNaN(num)) s = Math.round(num).toString();
+      }
+      s = s.replace(/\.0+$/, '');
+      if (s.includes('/') || s.includes(',') || s.includes(';') || s.includes(' ')) {
+        const parts = s.split(/[/,;\s]+/);
+        for (const p of parts) {
+          const cleanP = p.replace(/[^\d+]/g, '');
+          const pDigits = cleanP.replace(/\D/g, '');
+          if (pDigits.length >= 10 && pDigits.length <= 13) return cleanP;
+        }
+      }
+      return s.replace(/[^\d+]/g, '') || s;
+    };
+
     for (let i = 0; i < students.length; i++) {
       const row = students[i];
-      const rawName = String(row.fullName || row.name || `${row.firstName || ''} ${row.lastName || ''}`).trim();
+      const rawName = String(row.fullName || row.name || `${row.firstName || ''} ${row.lastName || ''}`.trim()).trim();
       if (!rawName) {
         errors.push({ row: i + 1, error: "Missing student name" });
         continue;
@@ -273,23 +435,82 @@ exports.bulkImportStudents = async (req, res) => {
       const nameParts = rawName.split(' ');
       const firstName = nameParts[0];
       const lastName = nameParts.slice(1).join(' ') || '.';
-      const phone = String(row.phone || row.mobile || row.contact || '0000000000').trim();
-      const fatherName = String(row.fatherName || row.father || 'Parent').trim();
-      const motherName = String(row.motherName || row.mother || '').trim();
 
-      // Resolve class
-      let targetClassId = fallbackClassId;
-      if (row.class || row.grade) {
-        const rawClass = String(row.class || row.grade).toLowerCase().replace(/\s+/g, '');
-        if (classMap.has(rawClass)) {
-          targetClassId = classMap.get(rawClass);
-        } else {
-          const digits = rawClass.replace(/\D/g, '');
-          if (digits && classMap.has(digits)) {
-            targetClassId = classMap.get(digits);
+      let rawPhone = row.phone;
+      if (!rawPhone || rawPhone === '0000000000') {
+        rawPhone = row.mobile || row.contact || row.mobileNo || row.mobNo || row.phoneNo || row.whatsapp || '';
+      }
+      if (!rawPhone || rawPhone === '0000000000') {
+        for (const k of Object.keys(row)) {
+          const lk = k.toLowerCase().replace(/[^a-z0-9]/g, '');
+          if (lk.includes('mobile') || lk.includes('phone') || lk.includes('contact') || lk.includes('mob')) {
+            if (row[k] && String(row[k]).trim() !== '' && String(row[k]).trim() !== '0000000000') {
+              rawPhone = row[k];
+              break;
+            }
           }
         }
       }
+      const phone = cleanPhone(rawPhone) || '0000000000';
+      const fatherName = String(row.fatherName || row.father || 'Parent').trim();
+      const motherName = String(row.motherName || row.mother || '').trim();
+
+      // Resolve class with smart matching
+      let targetClassId = fallbackClassId;
+      if (row.class || row.grade) {
+        let rawClass = String(row.class || row.grade).trim();
+        let normalized = normalizeClassInput(rawClass);
+
+        if (classMap.has(normalized)) {
+          targetClassId = classMap.get(normalized);
+        } else {
+          const romanNum = romanToArabic(normalized);
+          if (romanNum && classMap.has(String(romanNum))) {
+            targetClassId = classMap.get(String(romanNum));
+          } else {
+            const digits = normalized.replace(/\D/g, '');
+            if (digits && classMap.has(digits)) {
+              targetClassId = classMap.get(digits);
+            }
+          }
+        }
+      }
+
+      // ─── DUPLICATE / REJECTION CHECK ───
+      const normFullName = normalizeText(`${firstName} ${lastName}`);
+      const normFirstName = normalizeText(firstName);
+      const normFather = normalizeText(fatherName);
+      const studentClassKey = `${normFullName}|${normFather}|${targetClassId}`;
+      const studentClassKeyShort = `${normFirstName}|${normFather}|${targetClassId}`;
+      const aadharClean = String(row.aadharNo || row.aadhar || '').trim();
+
+      let rejectReason = null;
+      if (existingStudentSet.has(studentClassKey) || existingStudentSet.has(studentClassKeyShort)) {
+        rejectReason = `Already enrolled in this class with same name and father's name.`;
+      } else if (inBatchSeenKeys.has(studentClassKey) || inBatchSeenKeys.has(studentClassKeyShort)) {
+        rejectReason = `Duplicate: Appears multiple times in this uploaded file.`;
+      } else if (aadharClean && (existingAadharSet.has(aadharClean) || inBatchAadhars.has(aadharClean))) {
+        rejectReason = `Aadhar Number (${aadharClean}) is already registered to an existing student.`;
+      } else if (phone && phone !== '0000000000' && existingPhoneNameSet.has(`${normFirstName}|${phone}`)) {
+        rejectReason = `Student with same name and mobile (${phone}) already registered.`;
+      }
+
+      if (rejectReason) {
+        rejected.push({
+          row: i + 1,
+          name: rawName,
+          fatherName,
+          phone,
+          reason: rejectReason
+        });
+        continue; // ❌ REJECT: Do not insert duplicate!
+      }
+
+      // Mark as seen in this batch
+      inBatchSeenKeys.add(studentClassKey);
+      inBatchSeenKeys.add(studentClassKeyShort);
+      if (aadharClean) inBatchAadhars.add(aadharClean);
+      if (phone && phone !== '0000000000') existingPhoneNameSet.add(`${normFirstName}|${phone}`);
 
       const studentId = row.studentId || `STU-${Date.now().toString(36).toUpperCase()}-${Math.floor(Math.random() * 10000) + i}`;
 
@@ -336,15 +557,64 @@ exports.bulkImportStudents = async (req, res) => {
       await assignAlphabeticalRollNumbers(classId);
     }
 
+    const message = importedStudents.length > 0
+      ? `Import completed: ${importedStudents.length} students imported.${rejected.length > 0 ? ` ${rejected.length} duplicate records were rejected.` : ''}`
+      : `No new students imported. All ${rejected.length} records were rejected as duplicates.`;
+
     res.status(200).json({
       success: true,
-      message: `Successfully imported ${importedStudents.length} students.`,
+      message,
       importedCount: importedStudents.length,
+      rejectedCount: rejected.length,
       totalRows: students.length,
+      rejected,
       errors
     });
   } catch (error) {
     console.error("Bulk Import Students Error:", error);
     res.status(500).json({ success: false, message: error.message || "Bulk import failed." });
+  }
+};
+
+// --- 7. Reassign Alphabetical Roll Numbers (A to Z) for Single or All Classes ---
+exports.reassignAllRollNumbers = async (req, res) => {
+  try {
+    const { classId } = req.body;
+    let classesToProcess = [];
+
+    if (classId && classId !== 'all' && classId !== '') {
+      classesToProcess = [classId];
+    } else {
+      const allClassIds = await Student.distinct('class');
+      classesToProcess = allClassIds.filter(Boolean);
+    }
+
+    let totalUpdated = 0;
+    for (const cId of classesToProcess) {
+      // Fetch students in this class in true alphabetical order (A-Z) by First Name & Last Name
+      const students = await Student.find({ class: cId })
+        .collation({ locale: 'en', strength: 2 })
+        .sort({ firstName: 1, lastName: 1 });
+
+      if (students.length > 0) {
+        const bulkOps = students.map((std, idx) => ({
+          updateOne: {
+            filter: { _id: std._id },
+            update: { $set: { rollNo: idx + 1 } }
+          }
+        }));
+        await Student.bulkWrite(bulkOps);
+        totalUpdated += students.length;
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `Alphabetical Roll Numbers (1 to ${totalUpdated}) successfully assigned across ${classesToProcess.length} class(es)!`,
+      totalUpdated
+    });
+  } catch (error) {
+    console.error("Reassign Roll Numbers Error:", error);
+    res.status(500).json({ message: "Failed to reassign roll numbers" });
   }
 };

@@ -13,17 +13,27 @@ connectDB();
 const app = express();
 const server = http.createServer(app);
 
-// ✅ Define allowed origins in one place so it's easy to manage
-const allowedOrigins = [
-  "http://localhost:5173",
-  "https://radhey-shyam-shakuntala-seth-shikshan-sansthaan.vercel.app",
-  // 👈 Added your new Vercel URL!
-];
+// ✅ Dynamic CORS origin handler (supports all local dev ports + production Vercel domains)
+const isAllowedOrigin = (origin) => {
+  if (!origin) return true; // Allow mobile apps, curl, Postman
+  if (
+    origin.startsWith("http://localhost:") ||
+    origin.startsWith("http://127.0.0.1:") ||
+    origin.includes("vercel.app") ||
+    origin.includes("radhey-shyam-shakuntala-seth")
+  ) {
+    return true;
+  }
+  return false;
+};
 
 // --- SOCKET.IO SETUP ---
 const io = new Server(server, {
   cors: {
-    origin: allowedOrigins,
+    origin: (origin, callback) => {
+      if (isAllowedOrigin(origin)) callback(null, true);
+      else callback(null, true); // Dev-friendly fallback
+    },
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     credentials: true
   }
@@ -33,19 +43,21 @@ const io = new Server(server, {
 app.set("socketio", io);
 
 // --- MIDDLEWARE ---
-// ✅ UPDATED: Express CORS now uses the exact same allowed list and allows credentials
 app.use(cors({
-  origin: allowedOrigins,
+  origin: (origin, callback) => {
+    if (isAllowedOrigin(origin)) callback(null, true);
+    else callback(null, true);
+  },
   credentials: true
 }));
-app.use(express.json());
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
-// --- IMPORT ROUTES (Moved to top for better debugging) ---
+// --- IMPORT ROUTES ---
 const authRoutes = require('./routes/authRoutes');
 const feeRoutes = require('./routes/feeRoutes');
 const feeStructureRoutes = require('./routes/feeStructureRoutes');
 const transportRoutes = require('./routes/transportRoutes');
-
 const classRoutes = require("./routes/classRoutes");
 const studentRoutes = require("./routes/studentRoutes");
 const teacherRoutes = require("./routes/teacherRoutes");
@@ -55,6 +67,9 @@ const attendanceRoutes = require('./routes/attendance');
 const salaryRoutes = require('./routes/salaryRoutes');
 const markRoutes = require('./routes/markRoutes');
 const leaveRoutes = require('./routes/leaveRoutes');
+const expenseRoutes = require('./routes/expenseRoutes');
+const scheduleRoutes = require('./routes/scheduleRoutes');
+const dashboardRoutes = require('./routes/dashboardRoutes');
 
 // --- MOUNT ROUTES ---
 app.use('/api/auth', authRoutes);
@@ -64,39 +79,59 @@ app.use('/api/transport', transportRoutes);
 app.use('/api/attendance', attendanceRoutes);
 app.use('/api/marks', markRoutes);
 app.use('/api/leaves', leaveRoutes);
-app.use('/api/expenses', require('./routes/expenseRoutes'));
+app.use('/api/expenses', expenseRoutes);
 app.use("/api/classes", classRoutes);
 app.use("/api/students", studentRoutes);
 app.use("/api/teachers", teacherRoutes);
 app.use("/api/admin", adminRoutes);
 app.use('/api/subjects', subjectRoutes);
-app.use('/api/schedule', require('./routes/scheduleRoutes'));
-app.use('/api/dashboard', require('./routes/dashboardRoutes')); // 👈 CONNECTED DASHBOARD WIDGETS
+app.use('/api/schedule', scheduleRoutes);
+app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/salary', salaryRoutes);
 
 // Static Folder for Uploads
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
+// --- BASE & HEALTH CHECK ROUTES ---
+app.get("/", (req, res) => {
+  res.json({
+    status: "online",
+    message: "School Management System API is Running...",
+    timestamp: new Date()
+  });
+});
+
+app.get("/api/health", (req, res) => {
+  res.json({
+    status: "ok",
+    uptime: process.uptime(),
+    dbState: require("mongoose").connection.readyState === 1 ? "connected" : "connecting/disconnected"
+  });
+});
+
+// --- GLOBAL ERROR HANDLER ---
+app.use((err, req, res, next) => {
+  console.error("🔥 Global Error Caught:", err.stack || err.message || err);
+  res.status(err.status || 500).json({
+    message: err.message || "Internal Server Error",
+    error: process.env.NODE_ENV === "development" ? err : {}
+  });
+});
+
 // --- SOCKET CONNECTION LOGIC ---
 io.on("connection", (socket) => {
-  // Example: Laptop joins room to wait for mobile confirmation
   socket.on("join_reset_room", (email) => {
     socket.join(email);
     console.log(`User waiting for mobile click in room: ${email}`);
   });
 
   socket.on("disconnect", () => {
-    console.log("User disconnected");
+    // disconnected
   });
-});
-
-// --- BASE ROUTE ---
-app.get("/", (req, res) => {
-  res.send("School Management System API is Running...");
 });
 
 // --- SERVER START ---
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT} with Socket.io`);
+  console.log(`🚀 Server running on port ${PORT} with Socket.io`);
 });

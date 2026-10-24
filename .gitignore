@@ -1,2 +1,16 @@
 node_modules
 .env
+.env.*
+*.json.bak
+
+# Google Service Account Keys
+*.private-key.json
+lithe-timer-*.json
+
+# Uploads (optional, uncomment if needed)
+# uploads/
+
+# Logs
+logs/
+*.log
+npm-debug.log*

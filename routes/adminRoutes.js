@@ -1,10 +1,10 @@
 const express = require("express");
 const router = express.Router();
-const { getStats } = require("../controllers/adminController");
-
-// ✅ FIXED: Added curly braces to extract the function
-const { protect } = require("../middleware/authMiddleware");
+const { getStats, getDataCounts, clearData } = require("../controllers/adminController");
+const { protect, adminOnly } = require("../middleware/authMiddleware");
 
 router.get("/stats", protect, getStats);
+router.get("/data-counts", protect, adminOnly, getDataCounts);
+router.post("/clear-data", protect, adminOnly, clearData);
 
 module.exports = router;

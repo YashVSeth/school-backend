@@ -4,8 +4,8 @@ const classSchema = new mongoose.Schema({
   // 1. Grade (e.g. "10", "5", "LKG")
   grade: { type: String, required: true },
   
-  // 2. Section (e.g. "A", "B")
-  section: { type: String, required: true },
+  // 2. Section (e.g. "A", "B", or optional/empty)
+  section: { type: String, default: "" },
 
   // 3. Class Teacher (Main Monitor)
   classTeacher: { 

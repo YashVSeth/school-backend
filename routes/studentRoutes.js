@@ -16,10 +16,12 @@ const {
     markAttendance, 
     deleteStudent,
     updateStudent,
-    bulkImportStudents
+    bulkImportStudents,
+    reassignAllRollNumbers
 } = require("../controllers/studentController");
 
 // --- ROUTES ---
+router.post("/reassign-roll-numbers", protect, reassignAllRollNumbers);
 router.post("/bulk-import", protect, bulkImportStudents);
 router.post("/", protect, upload.single('photo'), addStudent);
 router.get("/", protect, getStudents);

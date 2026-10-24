@@ -1,14 +1,17 @@
 const mongoose = require('mongoose');
 
 const feeItemSchema = new mongoose.Schema({
-    name: { type: String, required: true },
+    name: { type: String, required: true, trim: true },
     desc: { type: String, default: '' },
     frequency: {
         type: String,
+        uppercase: true,
+        trim: true,
         enum: ['MONTHLY', 'QUARTERLY', 'HALF-YEARLY', 'YEARLY', 'ONE-TIME'],
-        required: true
+        required: true,
+        default: 'MONTHLY'
     },
-    amount: { type: Number, required: true }
+    amount: { type: Number, required: true, min: 0 }
 });
 
 const feeStructureSchema = new mongoose.Schema({
@@ -20,7 +23,8 @@ const feeStructureSchema = new mongoose.Schema({
     academicYear: {
         type: String,
         required: true,
-        default: '2026-27'
+        default: '2026-27',
+        trim: true
     },
     mandatoryFees: [feeItemSchema],
     optionalFees: [feeItemSchema],
@@ -30,7 +34,8 @@ const feeStructureSchema = new mongoose.Schema({
     }
 }, { timestamps: true });
 
-// Ensure one fee structure per class per academic year
+// Ensure one fee structure per class per academic year & fast query by year
 feeStructureSchema.index({ classId: 1, academicYear: 1 }, { unique: true });
+feeStructureSchema.index({ academicYear: 1 });
 
 module.exports = mongoose.model('FeeStructure', feeStructureSchema);

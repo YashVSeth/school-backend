@@ -2,20 +2,51 @@ const Student = require('../models/Student');
 const FeeStructure = require('../models/FeeStructure');
 const Transaction = require('../models/Transaction');
 const Invoice = require('../models/Invoice');
+const Class = require('../models/Class');
+
+// Helper to calculate annual multiplier for fee frequencies
+const getFrequencyMultiplier = (frequency) => {
+    if (!frequency) return 1;
+    const f = frequency.toString().toUpperCase().trim();
+    switch (f) {
+        case 'MONTHLY': return 12;
+        case 'QUARTERLY': return 4;
+        case 'HALF-YEARLY':
+        case 'HALFYEARLY':
+        case 'HALF_YEARLY': return 2;
+        case 'YEARLY':
+        case 'ONE-TIME':
+        case 'ONETIME':
+        case 'ONE_TIME':
+        default: return 1;
+    }
+};
+
+// Helper to calculate annual total for a fee structure
+const calculateStructureAnnual = (feeStructure) => {
+    if (!feeStructure) return 0;
+    let total = 0;
+    (feeStructure.mandatoryFees || []).forEach(fee => {
+        const mult = getFrequencyMultiplier(fee.frequency);
+        total += (Number(fee.amount) || 0) * mult;
+    });
+    return total;
+};
 
 // ----------------------------------------------------------------
-// 1. GET INVOICES FOR A STUDENT (UPDATED FOR NEW UI)
+// 1. GET INVOICES FOR A STUDENT (With Full Status & Duplicate Guard)
 // ----------------------------------------------------------------
 exports.getStudentInvoices = async (req, res) => {
     try {
         let query = { student: req.params.studentId };
+        const academicYear = req.query.academicYear || '2026-27';
+        query.academicYear = academicYear;
 
-        // If frontend DOES NOT ask for all, only show pending dues
-        if (req.query.all !== 'true') {
+        if (req.query.unpaidOnly === 'true') {
             query.status = { $ne: 'Paid' };
         }
 
-        const invoices = await Invoice.find(query).sort({ dueDate: 1 }); // Oldest first
+        const invoices = await Invoice.find(query).sort({ dueDate: 1 }).lean();
         res.json(invoices);
     } catch (error) {
         console.error("Fetch Invoices Error:", error);
@@ -24,30 +55,73 @@ exports.getStudentInvoices = async (req, res) => {
 };
 
 // ----------------------------------------------------------------
-// 2. PROCESS SHOPPING CART PAYMENT
+// 2. PROCESS SHOPPING CART PAYMENT (Smart Waterfall Priority Settlement)
 // ----------------------------------------------------------------
 exports.processCartPayment = async (req, res) => {
     try {
-        const { studentId, amountPaid, paymentMethod, invoicesToPay } = req.body;
-        let moneyLeftToDistribute = Number(amountPaid);
+        const { studentId, amountPaid, paymentMethod, invoicesToPay, remarks, clearArrears } = req.body;
+        const totalToDistribute = Number(amountPaid);
 
-        if (!moneyLeftToDistribute || moneyLeftToDistribute <= 0) {
+        if (!totalToDistribute || totalToDistribute <= 0) {
             return res.status(400).json({ message: "Invalid Payment Amount" });
         }
 
-        const student = await Student.findById(studentId);
+        const student = await Student.findById(studentId).populate('class');
         if (!student) return res.status(404).json({ message: "Student not found" });
 
-        const invoices = await Invoice.find({ _id: { $in: invoicesToPay } }).sort({ dueDate: 1 });
+        let moneyLeftToDistribute = totalToDistribute;
         let paidInvoiceTitles = [];
+        let paidInvoiceIds = [];
+        let details = student.feeDetails || {};
+
+        // 🌊 WATERFALL STEP 1: Settle Old Arrears first if requested or if past backlogs exist
+        if (clearArrears || (!invoicesToPay || invoicesToPay.length === 0)) {
+            if ((details.backlog_2024 || 0) > 0 && moneyLeftToDistribute > 0) {
+                const pay24 = Math.min(details.backlog_2024, moneyLeftToDistribute);
+                details.backlog_2024 -= pay24;
+                moneyLeftToDistribute -= pay24;
+                paidInvoiceTitles.push(`Arrears 2024 (₹${pay24})`);
+            }
+            if ((details.backlog_2025 || 0) > 0 && moneyLeftToDistribute > 0) {
+                const pay25 = Math.min(details.backlog_2025, moneyLeftToDistribute);
+                details.backlog_2025 -= pay25;
+                moneyLeftToDistribute -= pay25;
+                paidInvoiceTitles.push(`Arrears 2025 (₹${pay25})`);
+            }
+            if ((details.electricalCharges || 0) > 0 && moneyLeftToDistribute > 0) {
+                const payElec = Math.min(details.electricalCharges, moneyLeftToDistribute);
+                details.electricalCharges -= payElec;
+                moneyLeftToDistribute -= payElec;
+                paidInvoiceTitles.push(`Electrical Charges (₹${payElec})`);
+            }
+        }
+
+        // 🌊 WATERFALL STEP 2: Settle Mandatory & Tuition Invoices with Per-Item Partial Payment Support
+        const { itemBreakdown } = req.body; // Optional [{ invoiceId, amount }]
+        const itemMap = {};
+        if (Array.isArray(itemBreakdown)) {
+            itemBreakdown.forEach(ib => {
+                if (ib.invoiceId && ib.amount > 0) itemMap[ib.invoiceId.toString()] = Number(ib.amount);
+            });
+        }
+
+        const invoices = await Invoice.find({ _id: { $in: invoicesToPay || [] } }).sort({ dueDate: 1 });
 
         for (let inv of invoices) {
             if (moneyLeftToDistribute <= 0) break;
 
-            const pendingOnInvoice = inv.amount - inv.amountPaid;
-            const paymentForThisInvoice = Math.min(pendingOnInvoice, moneyLeftToDistribute);
+            const pendingOnInvoice = Math.max(0, inv.amount - (inv.amountPaid || 0));
+            if (pendingOnInvoice <= 0) continue;
 
-            inv.amountPaid += paymentForThisInvoice;
+            // If an explicit partial amount was specified for this invoice, use it; otherwise waterfall
+            let targetForThis = itemMap[inv._id.toString()] !== undefined
+                ? Math.min(itemMap[inv._id.toString()], pendingOnInvoice)
+                : pendingOnInvoice;
+
+            const paymentForThisInvoice = Math.min(targetForThis, moneyLeftToDistribute);
+            if (paymentForThisInvoice <= 0) continue;
+
+            inv.amountPaid = (inv.amountPaid || 0) + paymentForThisInvoice;
             moneyLeftToDistribute -= paymentForThisInvoice;
 
             if (inv.amountPaid >= inv.amount) {
@@ -56,29 +130,61 @@ exports.processCartPayment = async (req, res) => {
                 inv.status = 'Partially Paid';
             }
 
-            paidInvoiceTitles.push(inv.title);
+            paidInvoiceTitles.push(`${inv.title} (₹${paymentForThisInvoice}/${inv.amount})`);
+            paidInvoiceIds.push(inv._id);
             await inv.save();
         }
 
+        // Fallback title if nothing specific matched
+        if (paidInvoiceTitles.length === 0) {
+            paidInvoiceTitles.push(`Fee Payment`);
+        }
+
+        // 🌊 WATERFALL STEP 3: Surplus allocated to Advance Wallet
         if (moneyLeftToDistribute > 0) {
-            student.feeDetails = student.feeDetails || {};
-            student.feeDetails.walletBalance = (student.feeDetails.walletBalance || 0) + moneyLeftToDistribute;
-            student.markModified('feeDetails');
-            await student.save();
+            details.walletBalance = (details.walletBalance || 0) + moneyLeftToDistribute;
             paidInvoiceTitles.push(`+ ₹${moneyLeftToDistribute} added to Wallet`);
         }
 
+        // Synchronize student feesPaid
+        student.feesPaid = (student.feesPaid || 0) + totalToDistribute;
+        student.feeDetails = details;
+        student.markModified('feeDetails');
+        await student.save();
+
+        // Generate official Receipt Number
+        const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+        const randomNum = Math.floor(1000 + Math.random() * 9000);
+        const receiptNo = `REC-${dateStr}-${randomNum}`;
+
         const newTxn = new Transaction({
+            receiptNo,
             student: studentId,
-            amount: Number(amountPaid),
+            amount: totalToDistribute,
             monthsPaid: paidInvoiceTitles,
             paymentMethod: paymentMethod || 'Cash',
             date: new Date(),
-            academicYear: req.body.academicYear || '2026-27'
+            academicYear: req.body.academicYear || '2026-27',
+            invoices: paidInvoiceIds,
+            remarks: remarks || ''
         });
         await newTxn.save();
 
-        res.json({ message: "Payment processed successfully!", transaction: newTxn });
+        res.json({
+            message: "Payment processed successfully!",
+            receiptNo,
+            transaction: newTxn,
+            student: {
+                _id: student._id,
+                name: `${student.firstName} ${student.lastName || ''}`.trim(),
+                studentId: student.studentId,
+                rollNo: student.rollNo,
+                grade: student.class?.grade || 'N/A',
+                section: student.class?.section || '',
+                phone: student.phone || '',
+                fatherName: student.fatherName || ''
+            }
+        });
 
     } catch (error) {
         console.error("Cart Payment Error:", error);
@@ -87,7 +193,7 @@ exports.processCartPayment = async (req, res) => {
 };
 
 // ----------------------------------------------------------------
-// 3. COLLECT FEES (Legacy)
+// 3. COLLECT FEES (Direct Legacy/Quick Route)
 // ----------------------------------------------------------------
 exports.collectFees = async (req, res) => {
     try {
@@ -109,18 +215,21 @@ exports.collectFees = async (req, res) => {
             details.backlog_2025 = Math.max(0, (details.backlog_2025 || 0) - payAmount);
         } else if (category === 'Electrical') {
             details.electricalCharges = Math.max(0, (details.electricalCharges || 0) - payAmount);
-        } else {
-            student.feesPaid = (student.feesPaid || 0) + payAmount;
         }
 
+        student.feesPaid = (student.feesPaid || 0) + payAmount;
         student.feeDetails = details;
         student.markModified('feeDetails');
         await student.save();
 
+        const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+        const receiptNo = `REC-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
+
         const newTransaction = new Transaction({
+            receiptNo,
             student: studentId,
             amount: payAmount,
-            monthsPaid: category === 'Tuition' ? months : [category],
+            monthsPaid: category === 'Tuition' ? months : [category || 'Fee Collection'],
             paymentMethod: paymentMethod || 'Cash',
             date: new Date(),
             academicYear: req.body.academicYear || '2026-27'
@@ -128,8 +237,9 @@ exports.collectFees = async (req, res) => {
         await newTransaction.save();
 
         res.json({
-            message: `Payment applied to ${category} Successfully!`,
+            message: `Payment applied to ${category || 'fees'} successfully!`,
             amountPaid: payAmount,
+            receiptNo,
             remainingDues: details
         });
 
@@ -140,135 +250,184 @@ exports.collectFees = async (req, res) => {
 };
 
 // ----------------------------------------------------------------
-// 4. GLOBAL STATS (✅ UPDATED TO SUPPORT CLASS FILTER)
+// 4. GLOBAL STATS
 // ----------------------------------------------------------------
 exports.getGlobalStats = async (req, res) => {
     try {
-        const { classId } = req.query; // ✅ Check if frontend sent a class filter
-
-        // 1. Build the student query
-        let studentQuery = { status: 'active' };
-        if (classId) studentQuery.class = classId; // Filter by class if selected
-
-        const students = await Student.find(studentQuery).populate('class');
-        const studentIds = students.map(s => s._id);
-
+        const { classId } = req.query;
         const academicYear = req.query.academicYear || '2026-27';
 
-        // 2. Build the transaction query (Only sum money collected from THESE students)
+        const allClasses = await Class.find({}).sort({ grade: 1 }).lean();
+
+        let studentQuery = { status: 'active' };
+        if (classId) studentQuery.class = classId;
+
+        const students = await Student.find(studentQuery).populate('class', 'grade section').lean();
+        const studentIds = students.map(s => s._id);
+
         let txMatch = { academicYear };
         if (classId) txMatch.student = { $in: studentIds };
 
-        const totalCollectedResult = await Transaction.aggregate([
-            { $match: txMatch },
-            { $group: { _id: null, total: { $sum: "$amount" } } }
-        ]);
-        const totalCollected = totalCollectedResult.length > 0 ? totalCollectedResult[0].total : 0;
+        const [
+            totalCollectedResult,
+            lateFeeResult,
+            feeStructures,
+            monthlyAggregation,
+            recentTransactions
+        ] = await Promise.all([
+            Transaction.aggregate([
+                { $match: txMatch },
+                { $group: { _id: null, total: { $sum: "$amount" } } }
+            ]),
+            Transaction.aggregate([
+                { $match: { ...txMatch, monthsPaid: { $regex: /late fee|penalty/i } } },
+                { $group: { _id: null, total: { $sum: "$amount" } } }
+            ]),
+            FeeStructure.find({ academicYear }).lean(),
+            (() => {
+                const sixMonthsAgo = new Date();
+                sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 5);
+                sixMonthsAgo.setDate(1);
+                sixMonthsAgo.setHours(0, 0, 0, 0);
 
-        // 2b. Calculate Late Fees
-        const lateFeeResult = await Transaction.aggregate([
-            { $match: { ...txMatch, monthsPaid: { $regex: /late fee|penalty/i } } },
-            { $group: { _id: null, total: { $sum: "$amount" } } }
+                return Transaction.aggregate([
+                    { $match: { ...txMatch, date: { $gte: sixMonthsAgo } } },
+                    {
+                        $group: {
+                            _id: { month: { $month: "$date" }, year: { $year: "$date" } },
+                            total: { $sum: "$amount" }
+                        }
+                    },
+                    { $sort: { "_id.year": 1, "_id.month": 1 } }
+                ]);
+            })(),
+            Transaction.find(txMatch)
+                .sort({ date: -1 })
+                .limit(10)
+                .populate({
+                    path: 'student',
+                    select: 'firstName lastName studentId class feesPaid feeDetails',
+                    populate: { path: 'class', select: 'grade section' }
+                })
+                .lean()
         ]);
+
+        const totalCollected = totalCollectedResult.length > 0 ? totalCollectedResult[0].total : 0;
         const lateFeesCharged = lateFeeResult.length > 0 ? lateFeeResult[0].total : 0;
 
-        // 3. Calculate Dues
-        const feeStructures = await FeeStructure.find({ academicYear });
         const feeMap = {};
-
         feeStructures.forEach(fs => {
             if (fs.classId) {
-                let totalAnnual = 0;
-                fs.mandatoryFees?.forEach(fee => {
-                    if (fee.frequency === 'MONTHLY') totalAnnual += (fee.amount * 12);
-                    else if (fee.frequency === 'QUARTERLY') totalAnnual += (fee.amount * 4);
-                    else if (fee.frequency === 'HALF-YEARLY') totalAnnual += (fee.amount * 2);
-                    else totalAnnual += fee.amount; // YEARLY or ONE-TIME
-                });
-
-                feeMap[fs.classId.toString()] = totalAnnual;
+                const cId = fs.classId.toString();
+                feeMap[cId] = calculateStructureAnnual(fs);
             }
         });
 
+        const studentPayments = await Transaction.aggregate([
+            { $match: { academicYear, student: { $in: studentIds } } },
+            { $group: { _id: "$student", total: { $sum: "$amount" } } }
+        ]);
+        const studentPaidMap = {};
+        studentPayments.forEach(p => {
+            studentPaidMap[p._id.toString()] = p.total;
+        });
+
+        const classBreakdown = {};
+        allClasses.forEach(c => {
+            classBreakdown[c._id.toString()] = {
+                grade: c.grade,
+                section: c.section || '',
+                students: 0,
+                annualFee: feeMap[c._id.toString()] || 0,
+                totalExpected: 0,
+                collected: 0,
+                outstanding: 0,
+                collectionRate: 100
+            };
+        });
+
+        let grandTotalExpected = 0;
+        let overdueCount = 0;
         let totalArrears2024 = 0;
         let totalArrears2025 = 0;
         let totalCurrent2026 = 0;
 
         students.forEach(student => {
-            if (student.class && student.class._id) {
-                const cId = student.class._id.toString();
-                const yearlyFee = feeMap[cId] || 0;
+            const cId = student.class?._id ? student.class._id.toString() : student.class?.toString();
+            const yearlyFee = (cId && feeMap[cId]) ? feeMap[cId] : 0;
+            const ar24 = student.feeDetails?.backlog_2024 || 0;
+            const ar25 = student.feeDetails?.backlog_2025 || 0;
+            const elec = student.feeDetails?.electricalCharges || 0;
+            const transport = (student.feeDetails?.isUsingTransport ? (student.feeDetails.transportFee || 0) * 12 : 0);
 
-                totalArrears2024 += (student.feeDetails?.backlog_2024 || 0);
-                totalArrears2025 += (student.feeDetails?.backlog_2025 || 0);
+            totalArrears2024 += ar24;
+            totalArrears2025 += ar25;
+            totalCurrent2026 += (yearlyFee + elec + transport);
 
-                const electrical = (student.feeDetails?.electricalCharges || 0);
-                totalCurrent2026 += (yearlyFee + electrical);
+            const totalStudentDue = ar24 + ar25 + elec + transport + yearlyFee;
+            const studentPaid = studentPaidMap[student._id.toString()] || (student.feesPaid || 0);
+
+            grandTotalExpected += totalStudentDue;
+
+            const remainingBalance = Math.max(0, totalStudentDue - studentPaid);
+            if (remainingBalance > 0) {
+                overdueCount++;
+            }
+
+            if (cId && classBreakdown[cId]) {
+                classBreakdown[cId].students += 1;
+                classBreakdown[cId].totalExpected += totalStudentDue;
+                classBreakdown[cId].collected += studentPaid;
             }
         });
 
-        const grandTotalDue = totalArrears2024 + totalArrears2025 + Math.max(0, totalCurrent2026 - (totalCollected * 0.5));
+        Object.keys(classBreakdown).forEach(cId => {
+            const cb = classBreakdown[cId];
+            cb.outstanding = Math.max(0, cb.totalExpected - cb.collected);
+            cb.collectionRate = cb.totalExpected > 0
+                ? Number(((cb.collected / cb.totalExpected) * 100).toFixed(1))
+                : 100;
+        });
 
-        // 4. Fetch Recent Transactions
-        let recentTransactions = await Transaction.find(txMatch)
-            .sort({ date: -1 })
-            .limit(10)
-            .populate({
-                path: 'student',
-                select: 'firstName lastName studentId class feesPaid feeDetails',
-                populate: { path: 'class', select: 'grade' }
-            })
-            .lean();
+        const grandTotalDue = Math.max(0, grandTotalExpected - totalCollected);
 
-        // 4b. Dynamically insert the student's current total balance to the transaction log so the dashboard looks legit without faking it
-        recentTransactions = recentTransactions.map(txn => {
+        const enrichedRecentTransactions = recentTransactions.map(txn => {
             if (txn.student && txn.student.class && txn.student.class._id) {
                 const cId = txn.student.class._id.toString();
                 const yearlyFee = feeMap[cId] || 0;
                 const ar24 = txn.student.feeDetails?.backlog_2024 || 0;
                 const ar25 = txn.student.feeDetails?.backlog_2025 || 0;
                 const elec = txn.student.feeDetails?.electricalCharges || 0;
+                const transport = (txn.student.feeDetails?.isUsingTransport ? (txn.student.feeDetails.transportFee || 0) * 12 : 0);
 
-                const totalDuesThisKid = ar24 + ar25 + elec + yearlyFee;
-                const totalPaidByKid = txn.student.feesPaid || 0;
+                const totalStudentDue = ar24 + ar25 + elec + transport + yearlyFee;
+                const studentPaid = studentPaidMap[txn.student._id.toString()] || (txn.student.feesPaid || 0);
 
-                txn.remainingBalance = Math.max(0, totalDuesThisKid - totalPaidByKid);
+                txn.remainingBalance = Math.max(0, totalStudentDue - studentPaid);
             } else {
                 txn.remainingBalance = 0;
             }
             return txn;
         });
 
-        // 5. Calculate Monthly Breakdown (Last 6 Months)
-        const sixMonthsAgo = new Date();
-        sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
-
-        const monthlyAggregation = await Transaction.aggregate([
-            { $match: { ...txMatch, date: { $gte: sixMonthsAgo } } },
-            {
-                $group: {
-                    _id: { month: { $month: "$date" }, year: { $year: "$date" } },
-                    total: { $sum: "$amount" }
-                }
-            },
-            { $sort: { "_id.year": 1, "_id.month": 1 } }
-        ]);
-
         const monthsMap = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
         const collectionTrends = monthlyAggregation.map(item => ({
-            name: monthsMap[item._id.month - 1],
+            name: `${monthsMap[item._id.month - 1]} ${item._id.year}`,
+            month: monthsMap[item._id.month - 1],
             total: item.total
         }));
 
         res.json({
-            grandTotalDue: Math.max(0, grandTotalDue),
+            grandTotalDue,
             totalStudents: students.length,
+            overdueStudents: overdueCount,
             totalArrears2024,
             totalArrears2025,
             totalCurrent2026,
             totalCollected,
             lateFeesCharged,
-            recentTransactions,
+            classBreakdown,
+            recentTransactions: enrichedRecentTransactions,
             collectionTrends
         });
 
@@ -279,42 +438,205 @@ exports.getGlobalStats = async (req, res) => {
 };
 
 // ----------------------------------------------------------------
-// 5. GET FINANCE STATUS (UPDATED FOR NEW ARRAYS)
+// 5. DEFAULTERS & AGING ANALYSIS (New Automation Feature)
+// ----------------------------------------------------------------
+exports.getDefaulters = async (req, res) => {
+    try {
+        const academicYear = req.query.academicYear || '2026-27';
+        const { minDays, classId } = req.query;
+
+        let studentQuery = { status: 'active' };
+        if (classId) studentQuery.class = classId;
+
+        const [students, feeStructures, unpaidInvoices] = await Promise.all([
+            Student.find(studentQuery).populate('class', 'grade section').lean(),
+            FeeStructure.find({ academicYear }).lean(),
+            Invoice.find({ status: { $ne: 'Paid' }, academicYear }).lean()
+        ]);
+
+        const feeMap = {};
+        feeStructures.forEach(fs => {
+            if (fs.classId) feeMap[fs.classId.toString()] = calculateStructureAnnual(fs);
+        });
+
+        const now = new Date();
+        const defaulters = [];
+        const agingBuckets = {
+            tier1_30: { count: 0, total: 0 },   // 0-30 days
+            tier2_60: { count: 0, total: 0 },   // 31-60 days
+            tier3_90: { count: 0, total: 0 },   // 61-90 days
+            tier4_above90: { count: 0, total: 0 } // >90 days
+        };
+
+        students.forEach(student => {
+            const cId = student.class?._id ? student.class._id.toString() : student.class?.toString();
+            const yearlyFee = (cId && feeMap[cId]) ? feeMap[cId] : 0;
+            const ar24 = student.feeDetails?.backlog_2024 || 0;
+            const ar25 = student.feeDetails?.backlog_2025 || 0;
+            const elec = student.feeDetails?.electricalCharges || 0;
+            const transport = (student.feeDetails?.isUsingTransport ? (student.feeDetails.transportFee || 0) * 12 : 0);
+
+            const totalDue = ar24 + ar25 + elec + transport + yearlyFee;
+            const paid = student.feesPaid || 0;
+            const pendingAmount = Math.max(0, totalDue - paid);
+
+            if (pendingAmount > 0) {
+                // Find oldest unpaid invoice date or estimate from session start (April 1)
+                const studentInvoices = unpaidInvoices.filter(i => i.student.toString() === student._id.toString());
+                let oldestDueDate = new Date(now.getFullYear(), 3, 15); // Default: April 15th
+
+                if (studentInvoices.length > 0) {
+                    studentInvoices.sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
+                    oldestDueDate = new Date(studentInvoices[0].dueDate);
+                } else if (ar24 > 0 || ar25 > 0) {
+                    oldestDueDate = new Date(now.getFullYear() - 1, 3, 1);
+                }
+
+                const diffTime = Math.max(0, now - oldestDueDate);
+                const daysOverdue = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+
+                // Bucket aggregation
+                if (daysOverdue <= 30) {
+                    agingBuckets.tier1_30.count++;
+                    agingBuckets.tier1_30.total += pendingAmount;
+                } else if (daysOverdue <= 60) {
+                    agingBuckets.tier2_60.count++;
+                    agingBuckets.tier2_60.total += pendingAmount;
+                } else if (daysOverdue <= 90) {
+                    agingBuckets.tier3_90.count++;
+                    agingBuckets.tier3_90.total += pendingAmount;
+                } else {
+                    agingBuckets.tier4_above90.count++;
+                    agingBuckets.tier4_above90.total += pendingAmount;
+                }
+
+                if (!minDays || daysOverdue >= Number(minDays)) {
+                    const studentName = `${student.firstName} ${student.lastName || ''}`.trim();
+                    const gradeName = student.class?.grade || 'Class';
+                    const fatherName = student.fatherName || 'Parent';
+
+                    // Formatted WhatsApp message draft
+                    const whatsappMsg = `Dear ${fatherName}, this is a gentle reminder from Radhey Shyam Shikshan Sansthaan that school fee dues of ₹${pendingAmount.toLocaleString('en-IN')} for ${studentName} (${gradeName}) are overdue by ${daysOverdue} days. Please clear the pending dues at your earliest convenience. Thank you!`;
+
+                    defaulters.push({
+                        studentId: student.studentId,
+                        _id: student._id,
+                        name: studentName,
+                        grade: gradeName,
+                        section: student.class?.section || '',
+                        fatherName,
+                        phone: student.phone || '',
+                        email: student.email || '',
+                        pendingAmount,
+                        daysOverdue,
+                        oldestDueDate,
+                        whatsappMsg
+                    });
+                }
+            }
+        });
+
+        // Sort defaulters by highest pending amount / days overdue
+        defaulters.sort((a, b) => b.daysOverdue - a.daysOverdue || b.pendingAmount - a.pendingAmount);
+
+        res.json({
+            totalDefaulters: defaulters.length,
+            agingBuckets,
+            defaulters
+        });
+
+    } catch (error) {
+        console.error("Defaulters Error:", error);
+        res.status(500).json({ message: "Failed to fetch defaulters list" });
+    }
+};
+
+// ----------------------------------------------------------------
+// 6. NO-DUES FEE CLEARANCE CERTIFICATE (New Automation Feature)
+// ----------------------------------------------------------------
+exports.getClearanceCertificate = async (req, res) => {
+    try {
+        const student = await Student.findById(req.params.studentId).populate('class');
+        if (!student) return res.status(404).json({ message: "Student not found" });
+
+        const academicYear = req.query.academicYear || '2026-27';
+        const structure = await FeeStructure.findOne({
+            classId: student.class?._id || student.class,
+            academicYear
+        });
+
+        const yearlyTotal = calculateStructureAnnual(structure);
+        const ar24 = student.feeDetails?.backlog_2024 || 0;
+        const ar25 = student.feeDetails?.backlog_2025 || 0;
+        const elec = student.feeDetails?.electricalCharges || 0;
+        const transport = (student.feeDetails?.isUsingTransport ? (student.feeDetails.transportFee || 0) * 12 : 0);
+
+        const totalDue = ar24 + ar25 + elec + transport + yearlyTotal;
+        const totalPaid = student.feesPaid || 0;
+        const remaining = Math.max(0, totalDue - totalPaid);
+
+        const isCleared = remaining === 0;
+        const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+        const certificateNo = `ND-${dateStr}-${student.studentId || student._id.toString().slice(-4)}`;
+
+        res.json({
+            isCleared,
+            certificateNo,
+            issuedDate: new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
+            student: {
+                name: `${student.firstName} ${student.lastName || ''}`.trim(),
+                studentId: student.studentId,
+                rollNo: student.rollNo,
+                grade: student.class?.grade || 'N/A',
+                fatherName: student.fatherName || 'N/A',
+                motherName: student.motherName || 'N/A'
+            },
+            financialSummary: {
+                totalDue,
+                totalPaid,
+                remainingBalance: remaining,
+                academicYear
+            },
+            statusMessage: isCleared
+                ? "All academic and institutional fee dues have been verified and settled in full."
+                : `Student has an outstanding fee balance of ₹${remaining.toLocaleString('en-IN')}. Clearance cannot be issued.`
+        });
+
+    } catch (error) {
+        console.error("Clearance Error:", error);
+        res.status(500).json({ message: "Failed to generate clearance certificate" });
+    }
+};
+
+// ----------------------------------------------------------------
+// 7. GET FINANCE STATUS FOR A STUDENT
 // ----------------------------------------------------------------
 exports.getFinanceStatus = async (req, res) => {
     try {
         const student = await Student.findById(req.params.studentId).populate('class');
         if (!student) return res.status(404).json({ message: "Student not found" });
 
+        const academicYear = req.query.academicYear || '2026-27';
         const structure = await FeeStructure.findOne({
-            classId: student.class._id,
-            academicYear: req.query.academicYear || '2026-27'
+            classId: student.class?._id || student.class,
+            academicYear
         });
 
-        // ✅ Extract from new array schema, fallback to old schema, or 0
+        let yearlyTotal = 0;
         let monthlyFee = 0;
         let admissionFee = 0;
         let examFee = 0;
 
         if (structure) {
-            if (structure.mandatoryFees && structure.mandatoryFees.length > 0) {
-                // Find specific fees in the array
-                const tFee = structure.mandatoryFees.find(f => f.name.toLowerCase().includes('tuition'));
-                const aFee = structure.mandatoryFees.find(f => f.name.toLowerCase().includes('admission'));
-                const eFee = structure.mandatoryFees.find(f => f.name.toLowerCase().includes('exam'));
+            yearlyTotal = calculateStructureAnnual(structure);
+            const tFee = (structure.mandatoryFees || []).find(f => f.name.toLowerCase().includes('tuition'));
+            const aFee = (structure.mandatoryFees || []).find(f => f.name.toLowerCase().includes('admission'));
+            const eFee = (structure.mandatoryFees || []).find(f => f.name.toLowerCase().includes('exam'));
 
-                monthlyFee = tFee ? tFee.amount : 0;
-                admissionFee = aFee ? aFee.amount : 0;
-                examFee = eFee ? eFee.amount : 0;
-            } else {
-                // Legacy fallback (in case you haven't saved a new structure yet)
-                monthlyFee = structure.monthlyTuition || 0;
-                admissionFee = structure.admissionFee || 0;
-                examFee = structure.examFee || 0;
-            }
+            monthlyFee = tFee ? tFee.amount : 0;
+            admissionFee = aFee ? aFee.amount : 0;
+            examFee = eFee ? eFee.amount : 0;
         }
-
-        const yearlyTotal = (monthlyFee * 12) + admissionFee + examFee;
 
         const currentBacklog = (student.feeDetails?.backlog_2024 || 0) +
             (student.feeDetails?.backlog_2025 || 0) +
@@ -323,13 +645,15 @@ exports.getFinanceStatus = async (req, res) => {
         const totalPaid = student.feesPaid || 0;
         const walletBalance = student.feeDetails?.walletBalance || 0;
 
+        const transactions = await Transaction.find({ student: student._id }).sort({ date: -1 }).lean();
+
         res.json({
-            student: { firstName: student.firstName, lastName: student.lastName },
-            structure: { monthlyTuition: monthlyFee, admissionFee: admissionFee, examFee: examFee },
+            student: { firstName: student.firstName, lastName: student.lastName, studentId: student.studentId },
+            structure: { monthlyTuition: monthlyFee, admissionFee: admissionFee, examFee: examFee, yearlyTotal },
             totalDue: currentBacklog + yearlyTotal,
             totalPaid: totalPaid,
             walletBalance: walletBalance,
-            history: await Transaction.find({ student: student._id }).sort({ date: -1 })
+            history: transactions
         });
 
     } catch (error) {
@@ -339,27 +663,30 @@ exports.getFinanceStatus = async (req, res) => {
 };
 
 // ----------------------------------------------------------------
-// 6. RESET DATA (Maintenance)
+// 8. RESET DATA (Maintenance)
 // ----------------------------------------------------------------
 exports.resetFeeData = async (req, res) => {
     try {
-        await Transaction.deleteMany({});
-        await Invoice.deleteMany({});
-        await Student.updateMany({}, { $set: { feesPaid: 0, "feeDetails.walletBalance": 0 } });
-        res.json({ message: "History and Invoices Deleted." });
+        await Promise.all([
+            Transaction.deleteMany({}),
+            Invoice.deleteMany({}),
+            Student.updateMany({}, { $set: { feesPaid: 0, "feeDetails.walletBalance": 0 } })
+        ]);
+        res.json({ message: "Fee history and invoices reset successfully." });
     } catch (error) {
         res.status(500).json({ message: "Reset Failed" });
     }
 };
 
 // ----------------------------------------------------------------
-// 7. CREATE NEW INVOICE
+// 9. CREATE NEW INVOICE
 // ----------------------------------------------------------------
 exports.createInvoice = async (req, res) => {
     try {
-        const { studentId, title, amount } = req.body;
+        const { studentId, title, amount, academicYear } = req.body;
+        const year = academicYear || '2026-27';
 
-        if (!title || !amount) {
+        if (!title || amount === undefined || amount === null) {
             return res.status(400).json({ message: "Title and Amount are required" });
         }
 
@@ -368,25 +695,24 @@ exports.createInvoice = async (req, res) => {
             return res.status(404).json({ message: "Student not found." });
         }
 
-        // --- TRANSPORT OPT-IN VALIDATION ---
-        if (title.toLowerCase().includes('transport') && student.feeDetails?.isUsingTransport !== true) {
-            return res.status(400).json({ message: "Student has not opted for School Transport facility." });
-        }
+        // Check if an unpaid invoice already exists for this title and academic year
+        const existingInvoice = await Invoice.findOne({
+            student: studentId,
+            title: title.trim(),
+            academicYear: year,
+            status: { $ne: 'Paid' }
+        });
 
-        const existingInvoice = await Invoice.findOne({ student: studentId, title: title });
         if (existingInvoice) {
-            if (existingInvoice.status === 'Paid') {
-                return res.status(400).json({ message: `An invoice for ${title} already exists and is fully paid.` });
-            }
-            // If it's Partially Paid or Pending, return the existing one so they can pay it
-            return res.status(200).json({ message: "Invoice already exists. Proceeding with pending balance.", invoice: existingInvoice });
+            return res.status(200).json({ message: "Existing invoice found.", invoice: existingInvoice });
         }
 
         const newInvoice = new Invoice({
             student: studentId,
-            title: title,
-            amount: Number(amount),
-            dueDate: new Date()
+            title: title.trim(),
+            amount: Number(amount) || 0,
+            dueDate: new Date(),
+            academicYear: year
         });
 
         await newInvoice.save();
@@ -399,60 +725,68 @@ exports.createInvoice = async (req, res) => {
 };
 
 // ----------------------------------------------------------------
-// 8. BULK GENERATE MONTHLY BILLS (✅ UPDATED TO SUPPORT CLASS FILTER)
+// 10. BULK GENERATE MONTHLY BILLS
 // ----------------------------------------------------------------
 exports.generateMonthlyBills = async (req, res) => {
     try {
         const { monthTitle, defaultAmount, classId } = req.body;
+        const academicYear = req.body.academicYear || '2026-27';
 
-        // ✅ Only find students in the specific class (or all if none provided)
         let query = { status: 'active' };
         if (classId) query.class = classId;
 
-        const students = await Student.find(query);
-        let newInvoicesCount = 0;
+        const [students, allStructures] = await Promise.all([
+            Student.find(query).select('_id class').lean(),
+            FeeStructure.find({ academicYear }).lean()
+        ]);
 
-        // Pre-fetch all structures into a map
-        const academicYear = req.body.academicYear || '2026-27';
-        const allStructures = await FeeStructure.find({ academicYear });
         const structureMap = {};
-
         allStructures.forEach(fs => {
             if (fs.classId) {
                 let monthlySum = 0;
-                fs.mandatoryFees?.forEach(fee => {
+                (fs.mandatoryFees || []).forEach(fee => {
                     if (fee.frequency === 'MONTHLY') monthlySum += fee.amount;
                 });
                 structureMap[fs.classId.toString()] = monthlySum;
             }
         });
 
-        for (let student of students) {
-            const studentClassId = student.class?.toString();
-            // Automatically determine their grade's specific monthly fee from the map
-            const specificMonthlyFee = structureMap[studentClassId] || Number(defaultAmount);
+        const existingInvoices = await Invoice.find({
+            student: { $in: students.map(s => s._id) },
+            title: monthTitle
+        }).select('student').lean();
 
-            // Generate zero-balance invoices? Skip if 0.
+        const alreadyInvoiced = new Set(existingInvoices.map(i => i.student.toString()));
+        const newInvoices = [];
+
+        for (let student of students) {
+            if (alreadyInvoiced.has(student._id.toString())) continue;
+
+            const studentClassId = student.class ? student.class.toString() : '';
+            const specificMonthlyFee = structureMap[studentClassId] !== undefined
+                ? structureMap[studentClassId]
+                : Number(defaultAmount || 0);
+
             if (specificMonthlyFee <= 0) continue;
 
-            const existingInvoice = await Invoice.findOne({
+            newInvoices.push({
                 student: student._id,
-                title: monthTitle
+                title: monthTitle,
+                amount: specificMonthlyFee,
+                dueDate: new Date(),
+                academicYear
             });
+        }
 
-            if (!existingInvoice) {
-                await Invoice.create({
-                    student: student._id,
-                    title: monthTitle,
-                    amount: specificMonthlyFee,
-                    dueDate: new Date()
-                });
-                newInvoicesCount++;
-            }
+        if (newInvoices.length > 0) {
+            await Invoice.insertMany(newInvoices);
         }
 
         const targetMessage = classId ? `the selected class` : `all classes`;
-        res.json({ message: `Successfully generated ${newInvoicesCount} new bills for ${monthTitle} in ${targetMessage}!` });
+        res.json({
+            message: `Successfully generated ${newInvoices.length} new bills for ${monthTitle} in ${targetMessage}!`,
+            generatedCount: newInvoices.length
+        });
 
     } catch (error) {
         console.error("Bulk Invoice Error:", error);
@@ -461,49 +795,40 @@ exports.generateMonthlyBills = async (req, res) => {
 };
 
 // ----------------------------------------------------------------
-// 8.5 EXPORT MONTHLY REPORT (ALL TRANSACTIONS)
+// 11. EXPORT MONTHLY REPORT
 // ----------------------------------------------------------------
 exports.exportMonthlyReport = async (req, res) => {
     try {
-        const { year, month } = req.query; // optional filters
+        const { year, month } = req.query;
+        const academicYear = req.query.academicYear || '2026-27';
 
         let query = {};
         if (year && month) {
-            // Setup start and end dates for a specific month lookup
             const startDate = new Date(year, month - 1, 1);
             const endDate = new Date(year, month, 0, 23, 59, 59);
             query.date = { $gte: startDate, $lte: endDate };
         } else {
-            // Default: Fetch current month
             const now = new Date();
             const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
             query.date = { $gte: startOfMonth };
         }
 
-        // Fetch Transactions with deeply populated fields
-        const allTransactions = await Transaction.find(query)
-            .sort({ date: -1 })
-            .populate({
-                path: 'student',
-                select: 'firstName lastName studentId class feesPaid feeDetails',
-                populate: { path: 'class', select: 'grade section' }
-            })
-            .lean();
+        const [allTransactions, feeStructures] = await Promise.all([
+            Transaction.find(query)
+                .sort({ date: -1 })
+                .populate({
+                    path: 'student',
+                    select: 'firstName lastName studentId class feesPaid feeDetails',
+                    populate: { path: 'class', select: 'grade section' }
+                })
+                .lean(),
+            FeeStructure.find({ academicYear }).lean()
+        ]);
 
-        // Dynamically append remaining balances exactly like globalStats does it
-        const academicYear = req.query.academicYear || '2026-27';
-        const feeStructures = await FeeStructure.find({ academicYear });
         const feeMap = {};
         feeStructures.forEach(fs => {
             if (fs.classId) {
-                let totalAnnual = 0;
-                fs.mandatoryFees?.forEach(fee => {
-                    if (fee.frequency === 'MONTHLY') totalAnnual += (fee.amount * 12);
-                    else if (fee.frequency === 'QUARTERLY') totalAnnual += (fee.amount * 4);
-                    else if (fee.frequency === 'HALF-YEARLY') totalAnnual += (fee.amount * 2);
-                    else totalAnnual += fee.amount;
-                });
-                feeMap[fs.classId.toString()] = totalAnnual;
+                feeMap[fs.classId.toString()] = calculateStructureAnnual(fs);
             }
         });
 
@@ -515,10 +840,10 @@ exports.exportMonthlyReport = async (req, res) => {
                 const ar25 = txn.student.feeDetails?.backlog_2025 || 0;
                 const elec = txn.student.feeDetails?.electricalCharges || 0;
 
-                const totalDuesThisKid = ar24 + ar25 + elec + yearlyFee;
-                const totalPaidByKid = txn.student.feesPaid || 0;
+                const totalDues = ar24 + ar25 + elec + yearlyFee;
+                const totalPaid = txn.student.feesPaid || 0;
 
-                txn.remainingBalance = Math.max(0, totalDuesThisKid - totalPaidByKid);
+                txn.remainingBalance = Math.max(0, totalDues - totalPaid);
             } else {
                 txn.remainingBalance = 0;
             }
@@ -534,7 +859,7 @@ exports.exportMonthlyReport = async (req, res) => {
 };
 
 // ----------------------------------------------------------------
-// 9. GET FEE STRUCTURE FOR A CLASS
+// 12. GET FEE STRUCTURE FOR A CLASS (Legacy Compatibility)
 // ----------------------------------------------------------------
 exports.getFeeStructure = async (req, res) => {
     try {
@@ -542,8 +867,6 @@ exports.getFeeStructure = async (req, res) => {
             classId: req.params.classId,
             academicYear: req.query.academicYear || '2026-27'
         });
-
-        // If found, send it. If not, send empty arrays so frontend doesn't crash
         res.json(structure || { mandatoryFees: [], optionalFees: [] });
     } catch (error) {
         console.error("Fetch Structure Error:", error);
@@ -552,27 +875,25 @@ exports.getFeeStructure = async (req, res) => {
 };
 
 // ----------------------------------------------------------------
-// 10. SAVE OR UPDATE FEE STRUCTURE
+// 13. SAVE OR UPDATE FEE STRUCTURE (Legacy Compatibility)
 // ----------------------------------------------------------------
 exports.saveFeeStructure = async (req, res) => {
     try {
         const { classId, mandatoryFees, optionalFees, academicYear } = req.body;
+        const year = academicYear || '2026-27';
 
-        // Check if a structure already exists for this class
-        let structure = await FeeStructure.findOne({ classId, academicYear: academicYear || '2026-27' });
+        let structure = await FeeStructure.findOne({ classId, academicYear: year });
 
         if (structure) {
-            // Update existing
             structure.mandatoryFees = mandatoryFees;
             structure.optionalFees = optionalFees;
             await structure.save();
         } else {
-            // Create new
             structure = await FeeStructure.create({
                 classId,
                 mandatoryFees,
                 optionalFees,
-                academicYear: academicYear || '2026-27'
+                academicYear: year
             });
         }
 
@@ -582,7 +903,8 @@ exports.saveFeeStructure = async (req, res) => {
         res.status(500).json({ message: "Failed to save fee structure" });
     }
 };
-// Placeholders
+
+// Compatibility Stubs
 exports.addFee = async (req, res) => { res.json({ message: "Placeholder" }); };
 exports.getFees = async (req, res) => { res.json([]); };
 exports.getFeeStats = async (req, res) => { res.json({ message: "Placeholder" }); };

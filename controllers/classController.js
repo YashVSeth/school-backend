@@ -5,15 +5,25 @@ const addClass = async (req, res) => {
   try {
     const { grade, section } = req.body;
 
+    if (!grade) {
+      return res.status(400).json({ message: "Grade is required" });
+    }
+
+    const cleanSection = section ? String(section).trim() : "";
+
     // Check Duplicate
-    const existingClass = await Class.findOne({ grade, section });
+    const existingClass = await Class.findOne({ grade, section: cleanSection });
     if (existingClass) {
-      return res.status(400).json({ message: "Class already exists" });
+      return res.status(400).json({ 
+        message: cleanSection 
+          ? `Class ${grade} - ${cleanSection} already exists` 
+          : `Class ${grade} already exists` 
+      });
     }
 
     const newClass = new Class({
-      grade,
-      section
+      grade: String(grade).trim(),
+      section: cleanSection
     });
 
     await newClass.save();
