@@ -18,6 +18,7 @@ const TeacherSchema = new mongoose.Schema({
     highestQualification: { type: String },
     university: { type: String },
     specialization: { type: String },
+    experience: { type: String },
     remarks: { type: String },
     extraDuties: { type: String, default: 'No' },
 

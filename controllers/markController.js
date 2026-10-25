@@ -11,7 +11,7 @@ exports.getMarks = async (req, res) => {
         }
 
         const marks = await Mark.find({ classId, subject, examType })
-            .populate('student', 'fullName rollNumber');
+            .populate('student', 'firstName lastName rollNo studentId');
 
         res.status(200).json(marks);
     } catch (error) {

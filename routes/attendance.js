@@ -18,13 +18,23 @@ router.get('/my-students', protect, async (req, res) => {
     // 2. 'classTeacher' field mein?
     // 3. 'teacherId' field mein?
 
-    const assignedClass = await Class.findOne({
+    const requestedClassId = req.query.classId;
+
+    const allClasses = await Class.find({
       $or: [
         { teacher: teacherId },
         { classTeacher: teacherId },
         { teacherId: teacherId }
       ]
     });
+
+    let assignedClass = null;
+    if (requestedClassId) {
+      assignedClass = await Class.findById(requestedClassId);
+    }
+    if (!assignedClass && allClasses.length > 0) {
+      assignedClass = allClasses[0];
+    }
 
     if (!assignedClass) {
       console.log("⚠️ Class Nahi Mili (Check Admin Panel)");
@@ -33,14 +43,37 @@ router.get('/my-students', protect, async (req, res) => {
 
     console.log("✅ Class Found:", assignedClass.grade, assignedClass.section);
 
-    // Ab Students Dhoondo
+    // Auto-assign roll numbers alphabetically if any students are missing roll numbers
+    const unassignedCount = await Student.countDocuments({
+      class: assignedClass._id,
+      $or: [{ rollNo: null }, { rollNo: { $exists: false } }]
+    });
+
+    if (unassignedCount > 0) {
+      const studentsToAssign = await Student.find({ class: assignedClass._id })
+        .collation({ locale: 'en', strength: 2 })
+        .sort({ firstName: 1, lastName: 1 });
+
+      if (studentsToAssign.length > 0) {
+        const bulkOps = studentsToAssign.map((s, idx) => ({
+          updateOne: {
+            filter: { _id: s._id },
+            update: { $set: { rollNo: idx + 1 } }
+          }
+        }));
+        await Student.bulkWrite(bulkOps);
+      }
+    }
+
+    // Ab Students Dhoondo (Sorted by Roll Number)
     const students = await Student.find({ class: assignedClass._id })
-      .sort({ firstName: 1 });
+      .sort({ rollNo: 1, firstName: 1 });
 
     res.json({
       classId: assignedClass._id,
-      className: `${assignedClass.grade} - ${assignedClass.section}`,
-      students: students
+      className: `${assignedClass.grade}${assignedClass.section ? ` - ${assignedClass.section}` : ''}`,
+      students: students,
+      assignedClasses: allClasses
     });
 
   } catch (err) {

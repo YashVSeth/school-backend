@@ -2,6 +2,7 @@ const express = require("express");
 const dotenv = require("dotenv");
 const cors = require("cors");
 const http = require("http");
+const https = require("https");
 const { Server } = require("socket.io");
 const connectDB = require("./config/db");
 const path = require("path");
@@ -134,4 +135,20 @@ io.on("connection", (socket) => {
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT} with Socket.io`);
+
+  // --- KEEP-ALIVE AUTO-PING (For free-tier hosts like Render) ---
+  const SERVER_URL = process.env.RENDER_EXTERNAL_URL || process.env.SERVER_URL;
+  if (SERVER_URL) {
+    const PING_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
+    setInterval(() => {
+      const pingUrl = `${SERVER_URL}/api/health`;
+      const client = pingUrl.startsWith("https") ? https : http;
+      client.get(pingUrl, (res) => {
+        console.log(`[Keep-Alive] Pinged ${pingUrl} (Status: ${res.statusCode})`);
+      }).on("error", (err) => {
+        console.error(`[Keep-Alive] Ping error: ${err.message}`);
+      });
+    }, PING_INTERVAL_MS);
+    console.log(`[Keep-Alive] Configured to ping ${SERVER_URL} every 10 minutes`);
+  }
 });

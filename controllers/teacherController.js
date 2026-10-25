@@ -109,10 +109,22 @@ exports.deleteTeacher = async (req, res) => {
 // ✅ 5. NEW: Get My Schedule (For Teacher Dashboard)
 exports.getMySchedule = async (req, res) => {
     try {
-        const teacherId = req.user._id;
+        const teacherId = req.user?._id || req.user?.id;
         
-        // A. Check: Kya ye teacher kisi class ka 'Class Teacher' (Monitor) hai?
-        const classTeacherOf = await Class.findOne({ classTeacher: teacherId });
+        // A. Check: Classes where this teacher is assigned as Class Teacher
+        const classTeacherOf = await Class.findOne({
+            $or: [
+                { classTeacher: teacherId },
+                { teacher: teacherId }
+            ]
+        });
+
+        const allClassesTeacherOf = await Class.find({
+            $or: [
+                { classTeacher: teacherId },
+                { teacher: teacherId }
+            ]
+        });
         
         // B. Check: Ye teacher kaunse subjects padha raha hai?
         const subjectClasses = await Class.find({ "subjects.teacher": teacherId })
@@ -135,6 +147,7 @@ exports.getMySchedule = async (req, res) => {
         // D. Send Response
         res.status(200).json({
             classTeacher: classTeacherOf, // Main Class Info
+            assignedClasses: allClassesTeacherOf, // All assigned monitor classes
             schedule: schedule            // Subject Teaching Info
         });
 

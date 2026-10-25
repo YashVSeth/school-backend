@@ -255,6 +255,16 @@ router.post('/login', async (req, res) => {
     }
 });
 
+// Helper for text normalization
+const normalizeText = (text) => {
+    return String(text || '').toLowerCase().trim().replace(/[^a-z0-9]/g, '');
+};
+
+const isDummyPhone = (phone) => {
+    const p = String(phone || '').replace(/\D/g, '');
+    return !p || /^0+$/.test(p) || p.length < 10;
+};
+
 // ----------------------------------------------------------------
 // 7. POST: BULK IMPORT TEACHERS FROM EXCEL
 // ----------------------------------------------------------------
@@ -265,7 +275,29 @@ router.post('/bulk-import', protect, async (req, res) => {
             return res.status(400).json({ success: false, message: "No teacher records provided for import." });
         }
 
+        // Pre-fetch existing teachers to detect duplicates quickly
+        const existingTeachers = await Teacher.find({}, 'fullName email phone aadhaarNumber');
+        const existingEmailSet = new Set();
+        const existingPhoneSet = new Set();
+        const existingAadhaarSet = new Set();
+        const existingNamePhoneSet = new Set();
+
+        existingTeachers.forEach(t => {
+            if (t.email) existingEmailSet.add(t.email.toLowerCase().trim());
+            if (t.phone && !isDummyPhone(t.phone)) existingPhoneSet.add(t.phone.trim());
+            if (t.aadhaarNumber) existingAadhaarSet.add(t.aadhaarNumber.trim());
+            if (t.fullName && t.phone && !isDummyPhone(t.phone)) {
+                existingNamePhoneSet.add(`${normalizeText(t.fullName)}|${t.phone.trim()}`);
+            }
+        });
+
+        const inBatchEmails = new Set();
+        const inBatchPhones = new Set();
+        const inBatchAadhaars = new Set();
+        const inBatchNamePhone = new Set();
+
         const importedTeachers = [];
+        const rejected = [];
         const errors = [];
 
         const salt = await bcrypt.genSalt(10);
@@ -279,14 +311,82 @@ router.post('/bulk-import', protect, async (req, res) => {
                 continue;
             }
 
-            const email = String(row.email || `${fullName.toLowerCase().replace(/\s+/g, '')}${Math.floor(Math.random() * 1000)}@school.com`).trim();
             const phone = String(row.phone || row.mobile || row.contact || '').trim();
+            const aadhaarNumber = String(row.aadhaarNumber || row.aadharNo || row.aadhar || '').trim();
 
-            const existingTeacher = await Teacher.findOne({ email });
-            if (existingTeacher) {
-                errors.push({ row: i + 1, name: fullName, error: `Email ${email} is already registered.` });
-                continue;
+            let rawEmail = String(row.email || '').trim().toLowerCase();
+            let email = rawEmail;
+            if (!email) {
+                const cleanName = normalizeText(fullName) || 'teacher';
+                email = `${cleanName}${i + 1}@school.com`;
             }
+
+            // ─── DUPLICATE / REJECTION CHECK ───
+            const normName = normalizeText(fullName);
+            const namePhoneKey = `${normName}|${phone}`;
+
+            let rejectReason = null;
+            if (rawEmail && existingEmailSet.has(rawEmail)) {
+                rejectReason = `Email (${rawEmail}) is already registered to an existing teacher.`;
+            } else if (rawEmail && inBatchEmails.has(rawEmail)) {
+                rejectReason = `Duplicate Email (${rawEmail}) appears multiple times in this uploaded file.`;
+            } else if (aadhaarNumber && (existingAadhaarSet.has(aadhaarNumber) || inBatchAadhaars.has(aadhaarNumber))) {
+                rejectReason = `Aadhaar Number (${aadhaarNumber}) is already registered to an existing teacher.`;
+            } else if (!isDummyPhone(phone) && existingNamePhoneSet.has(namePhoneKey)) {
+                rejectReason = `Teacher with same name and phone (${phone}) is already registered.`;
+            } else if (!isDummyPhone(phone) && inBatchNamePhone.has(namePhoneKey)) {
+                rejectReason = `Duplicate: Teacher appears multiple times in this uploaded file.`;
+            }
+
+            if (rejectReason) {
+                rejected.push({
+                    row: i + 1,
+                    name: fullName,
+                    email: rawEmail || email,
+                    phone,
+                    reason: rejectReason
+                });
+                continue; // ❌ REJECT: skip duplicate record
+            }
+
+            // Ensure auto-generated email does not conflict with existing database records
+            if (!rawEmail && (existingEmailSet.has(email) || inBatchEmails.has(email))) {
+                const randomSuffix = Math.floor(1000 + Math.random() * 9000);
+                email = `${normalizeText(fullName)}${randomSuffix}@school.com`;
+            }
+
+            // Mark in-batch identifiers as seen
+            if (email) inBatchEmails.add(email);
+            if (aadhaarNumber) inBatchAadhaars.add(aadhaarNumber);
+            if (!isDummyPhone(phone)) {
+                inBatchPhones.add(phone);
+                inBatchNamePhone.add(namePhoneKey);
+            }
+
+            // Date of birth parsing
+            let parsedDob = null;
+            if (row.dob || row.dateOfBirth) {
+                const d = new Date(row.dob || row.dateOfBirth);
+                if (!isNaN(d.getTime())) parsedDob = d;
+            }
+
+            // Salary parsing (supports raw strings with currency symbols e.g. "₹35,000")
+            let baseSalary = 25000;
+            const rawSalary = row.baseSalary !== undefined ? row.baseSalary : row.salary;
+            if (rawSalary !== undefined && rawSalary !== null && String(rawSalary).trim() !== '') {
+                const parsedNum = Number(String(rawSalary).replace(/[^0-9.]/g, ''));
+                if (!isNaN(parsedNum) && parsedNum > 0) baseSalary = parsedNum;
+            }
+
+            const highestQualification = String(row.highestQualification || row.qualification || row.degree || 'B.Ed').trim();
+            const specialization = String(row.specialization || row.subject || row.subjectSpecialization || 'General').trim();
+            const university = String(row.university || row.college || row.institute || '').trim();
+            const experience = String(row.experience || row.exp || '1 Year').trim();
+            const permanentAddress = String(row.permanentAddress || row.address || row.city || '').trim();
+            const bloodGroup = String(row.bloodGroup || '').trim();
+            const remarks = String(row.remarks || '').trim();
+            const extraDuties = String(row.extraDuties || 'No').trim();
+            const gender = String(row.gender || 'Male').trim();
 
             let hashedPassword = defaultHashedPassword;
             if (row.password) {
@@ -296,31 +396,44 @@ router.post('/bulk-import', protect, async (req, res) => {
             const newTeacher = new Teacher({
                 fullName,
                 email,
-                phone,
+                phone: phone || '0000000000',
                 password: hashedPassword,
-                gender: row.gender || 'Male',
-                qualification: row.qualification || '',
-                experience: String(row.experience || ''),
-                subjectSpecialization: row.subjectSpecialization || row.subject || '',
-                salary: Number(row.salary) || 0,
-                address: row.address || '',
-                joiningDate: row.joiningDate ? new Date(row.joiningDate) : new Date(),
-                role: 'teacher'
+                gender,
+                dob: parsedDob,
+                highestQualification,
+                university,
+                specialization,
+                experience,
+                baseSalary,
+                permanentAddress,
+                aadhaarNumber,
+                bloodGroup,
+                remarks,
+                extraDuties,
+                role: 'Teacher',
+                status: 'Active'
             });
 
             try {
                 const saved = await newTeacher.save();
                 importedTeachers.push(saved);
+                existingEmailSet.add(email);
             } catch (saveErr) {
                 errors.push({ row: i + 1, name: fullName, error: saveErr.message });
             }
         }
 
+        const message = importedTeachers.length > 0
+            ? `Successfully imported ${importedTeachers.length} teachers.${rejected.length > 0 ? ` ${rejected.length} duplicate records were rejected.` : ''}`
+            : `No new teachers imported. All ${rejected.length} records were rejected as duplicates.`;
+
         res.status(200).json({
             success: true,
-            message: `Successfully imported ${importedTeachers.length} teachers.`,
+            message,
             importedCount: importedTeachers.length,
+            rejectedCount: rejected.length,
             totalRows: teachers.length,
+            rejected,
             errors
         });
     } catch (error) {
