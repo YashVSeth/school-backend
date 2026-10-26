@@ -9,28 +9,44 @@ const { protect } = require('../middleware/authMiddleware');
 // 1. GET MY STUDENTS (SMART VERSION)
 router.get('/my-students', protect, async (req, res) => {
   try {
-    const teacherId = req.user.id;
+    const teacherId = req.user?._id || req.user?.id;
     console.log("🔍 Teacher ID:", teacherId);
 
-    // --- JADOO 🪄: 3 Tarike se Class Dhoondo ---
-    // Code check karega ki Teacher kahan chupa hai:
-    // 1. 'teacher' field mein?
-    // 2. 'classTeacher' field mein?
-    // 3. 'teacherId' field mein?
-
+    // --- Search for classes assigned to this teacher ---
+    // Checks:
+    // 1. 'classTeacher' (Class Monitor)
+    // 2. 'teacher' or 'teacherId' (Legacy fields)
+    // 3. 'subjects.teacher' (Subject Teacher)
     const requestedClassId = req.query.classId;
 
-    const allClasses = await Class.find({
+    let allClasses = await Class.find({
       $or: [
-        { teacher: teacherId },
         { classTeacher: teacherId },
-        { teacherId: teacherId }
+        { teacher: teacherId },
+        { teacherId: teacherId },
+        { "subjects.teacher": teacherId }
       ]
-    });
+    })
+    .populate('classTeacher', 'fullName email phone')
+    .populate('subjects.subject', 'name')
+    .populate('subjects.teacher', 'fullName email phone')
+    .sort({ grade: 1, section: 1 });
+
+    // Admin fallback: If logged-in user is an Admin, allow viewing all classes
+    if (allClasses.length === 0 && (req.user?.role === 'admin' || req.user?.role === 'Admin')) {
+      allClasses = await Class.find()
+        .populate('classTeacher', 'fullName email phone')
+        .populate('subjects.subject', 'name')
+        .populate('subjects.teacher', 'fullName email phone')
+        .sort({ grade: 1, section: 1 });
+    }
 
     let assignedClass = null;
     if (requestedClassId) {
-      assignedClass = await Class.findById(requestedClassId);
+      assignedClass = await Class.findById(requestedClassId)
+        .populate('classTeacher', 'fullName email phone')
+        .populate('subjects.subject', 'name')
+        .populate('subjects.teacher', 'fullName email phone');
     }
     if (!assignedClass && allClasses.length > 0) {
       assignedClass = allClasses[0];

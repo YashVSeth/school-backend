@@ -35,7 +35,9 @@ router.get('/:id', protect, async (req, res) => {
     }
 
     const singleClass = await Class.findById(req.params.id)
-      .populate('classTeacher', 'fullName email phone'); // ✅ FIXED: 'teacher' -> 'classTeacher'
+      .populate('classTeacher', 'fullName email phone')
+      .populate('subjects.subject', 'name')
+      .populate('subjects.teacher', 'fullName email phone');
       
     if (!singleClass) {
       return res.status(404).json({ message: "Class not found" });
@@ -51,12 +53,29 @@ router.get('/:id', protect, async (req, res) => {
 // UPDATE CLASS
 router.put('/:id', protect, async (req, res) => {
   try {
+    const updateData = { ...req.body };
+
+    // Sanitize classTeacher (prevent CastError on empty string)
+    if (updateData.classTeacher === "" || updateData.classTeacher === undefined) {
+      updateData.classTeacher = null;
+    }
+
+    // Sanitize subjects array (prevent CastError if teacher is empty string)
+    if (Array.isArray(updateData.subjects)) {
+      updateData.subjects = updateData.subjects.map(item => ({
+        subject: item.subject,
+        teacher: (item.teacher && String(item.teacher).trim() !== "") ? item.teacher : null
+      }));
+    }
+
     const updatedClass = await Class.findByIdAndUpdate(
       req.params.id, 
-      { $set: req.body }, 
+      { $set: updateData }, 
       { new: true }
     )
-    .populate('classTeacher', 'fullName email'); // ✅ FIXED: 'teacher' -> 'classTeacher'
+    .populate('classTeacher', 'fullName email phone')
+    .populate('subjects.subject', 'name')
+    .populate('subjects.teacher', 'fullName email phone');
     
     if (!updatedClass) {
         return res.status(404).json({ message: "Class not found" });

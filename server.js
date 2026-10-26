@@ -71,6 +71,7 @@ const leaveRoutes = require('./routes/leaveRoutes');
 const expenseRoutes = require('./routes/expenseRoutes');
 const scheduleRoutes = require('./routes/scheduleRoutes');
 const dashboardRoutes = require('./routes/dashboardRoutes');
+const digilockerRoutes = require('./routes/digilockerRoutes');
 
 // --- MOUNT ROUTES ---
 app.use('/api/auth', authRoutes);
@@ -89,6 +90,7 @@ app.use('/api/subjects', subjectRoutes);
 app.use('/api/schedule', scheduleRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/salary', salaryRoutes);
+app.use('/api/digilocker', digilockerRoutes);
 
 // Static Folder for Uploads
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));

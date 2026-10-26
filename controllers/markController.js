@@ -4,14 +4,21 @@ const Student = require('../models/Student');
 // 1. Get Marks for a specific Class, Subject, and Exam Type
 exports.getMarks = async (req, res) => {
     try {
-        const { classId, subject, examType } = req.query;
+        const { classId, subject, examType, studentId } = req.query;
 
-        if (!classId || !subject || !examType) {
-            return res.status(400).json({ message: "classId, subject, and examType are required parameters." });
+        if (!classId && !studentId) {
+            return res.status(400).json({ message: "classId or studentId is required parameter." });
         }
 
-        const marks = await Mark.find({ classId, subject, examType })
-            .populate('student', 'firstName lastName rollNo studentId');
+        const filter = {};
+        if (classId) filter.classId = classId;
+        if (studentId) filter.student = studentId;
+        if (subject) filter.subject = subject;
+        if (examType) filter.examType = examType;
+
+        const marks = await Mark.find(filter)
+            .populate('student', 'firstName lastName rollNo studentId')
+            .populate('teacher', 'fullName email phone');
 
         res.status(200).json(marks);
     } catch (error) {
@@ -23,7 +30,7 @@ exports.getMarks = async (req, res) => {
 // 2. Bulk Submit/Update Marks
 exports.submitBulkMarks = async (req, res) => {
     try {
-        const teacherId = req.user._id; // Extracted from authMiddleware
+        const teacherId = req.user?._id || req.user?.id; // Extracted from authMiddleware
         const { classId, subject, examType, marksData } = req.body;
         // marksData format: [{ studentId: "...", score: 85, remarks: "Good" }, ...]
 

@@ -19,8 +19,17 @@ const markSchema = new mongoose.Schema({
     examType: {
         type: String,
         required: true,
-        enum: ['Unit Test', 'Mid Term', 'Final Exam', 'Assignment', 'Practical'],
-        default: 'Unit Test'
+        enum: [
+            'Unit 1',
+            'Unit 2',
+            'Mid Term',
+            'End Term',
+            'Unit Test 1',
+            'Unit Test 2',
+            'Unit Test',
+            'Final Exam'
+        ],
+        default: 'Unit 1'
     },
     score: {
         type: Number,

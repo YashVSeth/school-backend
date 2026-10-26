@@ -36,10 +36,11 @@ const addClass = async (req, res) => {
 // 2. Get All Classes (Modified to show Teacher Name)
 const getClasses = async (req, res) => {
   try {
-    // ✅ POPULATE ADDED: Isse Teacher ka poora data milega (Naam, Email)
+    // ✅ POPULATE ADDED: Isse Teacher aur Subject ka poora data milega
     const classes = await Class.find()
-      .populate('classTeacher', 'fullName email')
+      .populate('classTeacher', 'fullName email phone')
       .populate('subjects.subject', 'name')
+      .populate('subjects.teacher', 'fullName email phone')
       .sort({ grade: 1, section: 1 }); // Sort by Grade
 
     res.status(200).json(classes);
@@ -79,13 +80,16 @@ const updateFeeStructure = async (req, res) => {
 const assignClassTeacher = async (req, res) => {
   try {
     const { classId, teacherId } = req.body;
+    const cleanTeacherId = (teacherId && String(teacherId).trim() !== "") ? teacherId : null;
 
     // Class dhoondo aur Teacher update karo
     const updatedClass = await Class.findByIdAndUpdate(
       classId,
-      { classTeacher: teacherId },
+      { classTeacher: cleanTeacherId },
       { new: true } // Return updated data
-    ).populate('classTeacher', 'fullName');
+    ).populate('classTeacher', 'fullName email phone')
+     .populate('subjects.subject', 'name')
+     .populate('subjects.teacher', 'fullName email phone');
 
     if (!updatedClass) {
       return res.status(404).json({ message: "Class not found" });

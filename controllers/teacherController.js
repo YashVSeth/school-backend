@@ -106,7 +106,7 @@ exports.deleteTeacher = async (req, res) => {
   }
 };
 
-// ✅ 5. NEW: Get My Schedule (For Teacher Dashboard)
+// ✅ 5. NEW: Get My Schedule (For Teacher Dashboard & Marks Entry)
 exports.getMySchedule = async (req, res) => {
     try {
         const teacherId = req.user?._id || req.user?.id;
@@ -117,38 +117,82 @@ exports.getMySchedule = async (req, res) => {
                 { classTeacher: teacherId },
                 { teacher: teacherId }
             ]
-        });
+        })
+        .populate('classTeacher', 'fullName email phone')
+        .populate('subjects.subject', 'name')
+        .populate('subjects.teacher', 'fullName email phone');
 
         const allClassesTeacherOf = await Class.find({
             $or: [
                 { classTeacher: teacherId },
                 { teacher: teacherId }
             ]
-        });
+        })
+        .populate('classTeacher', 'fullName email phone')
+        .populate('subjects.subject', 'name')
+        .populate('subjects.teacher', 'fullName email phone')
+        .sort({ grade: 1, section: 1 });
         
-        // B. Check: Ye teacher kaunse subjects padha raha hai?
+        // B. Check: Classes where this teacher is assigned to subjects
         const subjectClasses = await Class.find({ "subjects.teacher": teacherId })
-                                          .populate('subjects.subject');
+            .populate('classTeacher', 'fullName email phone')
+            .populate('subjects.subject', 'name')
+            .populate('subjects.teacher', 'fullName email phone')
+            .sort({ grade: 1, section: 1 });
 
-        // C. Subject Data Format karein
-        const schedule = subjectClasses.map(cls => {
-            const mySubjects = cls.subjects.filter(sub => 
-                sub.teacher && sub.teacher.toString() === teacherId.toString()
-            );
+        // C. Combine into a unified, deduplicated schedule list
+        const scheduleMap = new Map();
 
-            return {
+        // 1. First add subjectClasses
+        subjectClasses.forEach(cls => {
+            const mySubjects = (cls.subjects || [])
+                .filter(sub => sub.teacher && (sub.teacher._id || sub.teacher).toString() === teacherId.toString())
+                .map(s => (s.subject?.name || (typeof s.subject === 'string' ? s.subject : null)))
+                .filter(Boolean);
+
+            const isMonitor = (cls.classTeacher?._id || cls.classTeacher)?.toString() === teacherId.toString();
+
+            // If mySubjects is empty (fallback), list all subjects of this class
+            const displaySubjects = mySubjects.length > 0 
+                ? mySubjects 
+                : (cls.subjects || []).map(s => s.subject?.name).filter(Boolean);
+
+            scheduleMap.set(cls._id.toString(), {
                 _id: cls._id,
                 grade: cls.grade,
                 section: cls.section,
-                subjects: mySubjects.map(s => s.subject ? s.subject.name : "Unknown")
-            };
+                isClassTeacher: isMonitor,
+                subjects: displaySubjects.length > 0 ? displaySubjects : ["General"]
+            });
         });
+
+        // 2. Also ensure classes where teacher is Class Monitor are included in schedule
+        allClassesTeacherOf.forEach(cls => {
+            const key = cls._id.toString();
+            if (!scheduleMap.has(key)) {
+                const classSubjects = (cls.subjects || [])
+                    .map(s => s.subject?.name || (typeof s.subject === 'string' ? s.subject : null))
+                    .filter(Boolean);
+
+                scheduleMap.set(key, {
+                    _id: cls._id,
+                    grade: cls.grade,
+                    section: cls.section,
+                    isClassTeacher: true,
+                    subjects: classSubjects.length > 0 ? classSubjects : ["General"]
+                });
+            } else {
+                scheduleMap.get(key).isClassTeacher = true;
+            }
+        });
+
+        const schedule = Array.from(scheduleMap.values());
 
         // D. Send Response
         res.status(200).json({
             classTeacher: classTeacherOf, // Main Class Info
             assignedClasses: allClassesTeacherOf, // All assigned monitor classes
-            schedule: schedule            // Subject Teaching Info
+            schedule: schedule            // Unified Subject & Class Teaching Info
         });
 
     } catch (error) {
