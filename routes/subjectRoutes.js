@@ -23,4 +23,14 @@ router.post('/', async (req, res) => {
   }
 });
 
+// Delete subject
+router.delete('/:id', async (req, res) => {
+  try {
+    await Subject.findByIdAndDelete(req.params.id);
+    res.json({ message: "Subject deleted successfully" });
+  } catch (err) {
+    res.status(500).json({ message: "Error deleting subject", error: err.message });
+  }
+});
+
 module.exports = router;

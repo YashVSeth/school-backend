@@ -11,7 +11,10 @@ const upload = multer({
     limits: { fileSize: 15 * 1024 * 1024 }
 });
 
-// All DigiLocker routes are protected
+// 5b. Fetch Student Record via 12-Digit ABC ID (APAAR ID) - Public Gateway API
+router.post('/gateway/fetch-by-abc', digilockerController.fetchStudentByAbcId);
+
+// All other DigiLocker vault routes are protected
 router.use(protect);
 
 // 1. Vault Analytics & Stats

@@ -16,6 +16,8 @@ const StudentSchema = new mongoose.Schema({
     gender: { type: String },
     bloodGroup: { type: String },
     aadharNo: { type: String },
+    abcId: { type: String, trim: true },
+    apaarId: { type: String, trim: true },
     previousSchool: { type: String },
     height: { type: String },
     weight: { type: String },

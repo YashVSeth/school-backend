@@ -62,7 +62,8 @@ exports.addStudent = async (req, res) => {
     const {
       firstName, lastName, fatherName, motherName, phone,
       email, address, dob, gender, bloodGroup, class: studentClass,
-      whatsappEnabled, feeDetails, height, weight, photo
+      whatsappEnabled, feeDetails, height, weight, photo,
+      aadharNo, abcId, apaarId, previousSchool
     } = req.body;
 
     // Validation
@@ -86,6 +87,10 @@ exports.addStudent = async (req, res) => {
       height,
       weight,
       photo: photoUrl,
+      aadharNo: aadharNo || '',
+      abcId: abcId || apaarId || '',
+      apaarId: apaarId || abcId || '',
+      previousSchool: previousSchool || '',
       whatsappEnabled: whatsappEnabled ?? true,
       feeDetails: {
         backlog_2024: 0,
