@@ -16,19 +16,23 @@ connectDB();
 const app = express();
 const server = http.createServer(app);
 
-// ✅ Secure CORS origin handler (supports local dev ports + exact school production domains)
+// ✅ Secure CORS origin handler (supports local dev ports + all Vercel/Render production domains)
 const isAllowedOrigin = (origin) => {
   if (!origin) return true; // Allow mobile apps, curl, server-to-server
   // Allow localhost & 127.0.0.1 on any port for local development
   if (/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
     return true;
   }
-  // Allow verified production frontend domains
-  if (
-    /^https:\/\/radhey-shyam-shakuntala-seth.*\.vercel\.app$/.test(origin) ||
-    (origin.endsWith(".vercel.app") && origin.includes("radhey-shyam")) ||
-    (process.env.CLIENT_URL && origin === process.env.CLIENT_URL)
-  ) {
+  // Allow all Vercel deployments (production & preview)
+  if (origin.endsWith('.vercel.app') || origin.includes('.vercel.app')) {
+    return true;
+  }
+  // Allow Render backend & services
+  if (origin.endsWith('.onrender.com') || origin.includes('.onrender.com')) {
+    return true;
+  }
+  // Allow custom configured CLIENT_URL
+  if (process.env.CLIENT_URL && origin === process.env.CLIENT_URL) {
     return true;
   }
   return false;
@@ -41,7 +45,7 @@ const io = new Server(server, {
       if (isAllowedOrigin(origin)) {
         callback(null, true);
       } else {
-        callback(new Error("CORS policy violation: Socket origin not allowed."));
+        callback(null, false);
       }
     },
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -79,7 +83,7 @@ app.use(cors({
     if (isAllowedOrigin(origin)) {
       callback(null, true);
     } else {
-      callback(new Error("CORS policy violation: HTTP origin not allowed."));
+      callback(null, false);
     }
   },
   credentials: true
