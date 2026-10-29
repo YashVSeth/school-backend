@@ -1,7 +1,7 @@
-const express = require('express');
+﻿const express = require('express');
 const router = express.Router();
 const Teacher = require('../models/Teacher');
-const { protect } = require('../middleware/authMiddleware');
+const { protect, adminOnly } = require('../middleware/authMiddleware');
 const multer = require('multer');
 require('dotenv').config();
 const bcrypt = require('bcryptjs');
@@ -44,7 +44,7 @@ const uploadFile = async (file, prefix = 'doc') => {
 // ----------------------------------------------------------------
 // 2. POST: ADD TEACHER 
 // ----------------------------------------------------------------
-router.post('/', protect, upload.fields([
+router.post('/', protect, adminOnly, upload.fields([
     { name: 'photo', maxCount: 1 },
     { name: 'resume', maxCount: 1 },
     { name: 'idProof', maxCount: 1 }
@@ -88,7 +88,9 @@ router.post('/', protect, upload.fields([
         const newTeacher = new Teacher(teacherData);
         const savedTeacher = await newTeacher.save();
 
-        res.status(201).json(savedTeacher);
+                const cleanTeacher = savedTeacher.toObject ? savedTeacher.toObject() : { ...savedTeacher };
+        delete cleanTeacher.password;
+        res.status(201).json(cleanTeacher);
 
     } catch (err) {
         console.error("Backend Error:", err);
@@ -109,7 +111,7 @@ router.post('/', protect, upload.fields([
 // ----------------------------------------------------------------
 router.get('/', protect, async (req, res) => {
     try {
-        const teachers = await Teacher.find().sort({ createdAt: -1 });
+        const teachers = await Teacher.find().select('-password').sort({ createdAt: -1 });
         res.json(teachers);
     } catch (err) {
         res.status(500).json({ message: "Server Error" });
@@ -137,7 +139,7 @@ router.get('/my-schedule', protect, getMySchedule);
 // ----------------------------------------------------------------
 // 4.5 PUT: BULK UPDATE TEACHER BASE SALARIES
 // ----------------------------------------------------------------
-router.put('/bulk-salary', protect, async (req, res) => {
+router.put('/bulk-salary', protect, adminOnly, async (req, res) => {
     try {
         const { salaries } = req.body;
 
@@ -164,7 +166,7 @@ router.put('/bulk-salary', protect, async (req, res) => {
 // ----------------------------------------------------------------
 // 4. PUT: UPDATE TEACHER 
 // ----------------------------------------------------------------
-router.put('/:id', protect, upload.fields([
+router.put('/:id', protect, adminOnly, upload.fields([
     { name: 'photo', maxCount: 1 },
     { name: 'resume', maxCount: 1 },
     { name: 'idProof', maxCount: 1 }
@@ -203,7 +205,7 @@ router.put('/:id', protect, upload.fields([
 // ----------------------------------------------------------------
 // 5. DELETE: REMOVE TEACHER 
 // ----------------------------------------------------------------
-router.delete('/:id', protect, async (req, res) => {
+router.delete('/:id', protect, adminOnly, async (req, res) => {
     try {
         const { id } = req.params;
         const deletedTeacher = await Teacher.findByIdAndDelete(id);
@@ -223,15 +225,16 @@ router.post('/login', async (req, res) => {
 
         console.log("👉 Login Attempt via Email:", email);
 
-        const teacher = await Teacher.findOne({ email: email });
+        const cleanEmail = String(email || '').toLowerCase().trim();
+        const teacher = await Teacher.findOne({ email: cleanEmail }).select('+password');
 
         if (!teacher) {
-            return res.status(404).json({ message: "Invalid Email" });
+            return res.status(401).json({ message: "Invalid email or password" });
         }
 
         const isMatch = await bcrypt.compare(password, teacher.password);
         if (!isMatch) {
-            return res.status(400).json({ message: "Invalid Password" });
+            return res.status(401).json({ message: "Invalid email or password" });
         }
 
         const token = jwt.sign(
@@ -268,7 +271,7 @@ const isDummyPhone = (phone) => {
 // ----------------------------------------------------------------
 // 7. POST: BULK IMPORT TEACHERS FROM EXCEL
 // ----------------------------------------------------------------
-router.post('/bulk-import', protect, async (req, res) => {
+router.post('/bulk-import', protect, adminOnly, async (req, res) => {
     try {
         const { teachers } = req.body;
         if (!Array.isArray(teachers) || teachers.length === 0) {

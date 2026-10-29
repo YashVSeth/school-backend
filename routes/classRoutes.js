@@ -1,7 +1,7 @@
-const express = require("express");
+﻿const express = require("express");
 const router = express.Router();
 const Class = require('../models/Class');
-const { protect } = require("../middleware/authMiddleware");
+const { protect, adminOnly } = require("../middleware/authMiddleware");
 
 // Import Controllers
 const { 
@@ -18,11 +18,11 @@ if (!assignClassTeacher) console.error("❌ ERROR: assignClassTeacher is missing
 // --- ROUTES ---
 
 // 1. SPECIFIC ROUTES (Inhein hamesha upar rakhein)
-router.put('/fee-structure', protect, updateFeeStructure); // Fees update
-router.put('/assign', protect, assignClassTeacher);        // ✅ TEACHER ASSIGN ROUTE
+router.put('/fee-structure', protect, adminOnly, updateFeeStructure); // Fees update
+router.put('/assign', protect, adminOnly, assignClassTeacher);        // ✅ TEACHER ASSIGN ROUTE
 
 // 2. STANDARD ROUTES
-router.post("/", protect, addClass); // Create Class
+router.post("/", protect, adminOnly, addClass); // Create Class
 router.get("/", protect, getClasses); // Get All Classes
 
 // 3. DYNAMIC ID ROUTES (Inhein sabse neeche rakhein)
@@ -51,7 +51,7 @@ router.get('/:id', protect, async (req, res) => {
 });
 
 // UPDATE CLASS
-router.put('/:id', protect, async (req, res) => {
+router.put('/:id', protect, adminOnly, async (req, res) => {
   try {
     const updateData = { ...req.body };
 
@@ -89,7 +89,7 @@ router.put('/:id', protect, async (req, res) => {
 });
 
 // DELETE CLASS
-router.delete('/:id', protect, async (req, res) => {
+router.delete('/:id', protect, adminOnly, async (req, res) => {
   try {
     const deletedClass = await Class.findByIdAndDelete(req.params.id);
     if (!deletedClass) return res.status(404).json({ message: "Class not found" });

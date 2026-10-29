@@ -1,4 +1,4 @@
-const mongoose = require("mongoose");
+﻿const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
 
 const UserSchema = new mongoose.Schema({
@@ -16,6 +16,7 @@ const UserSchema = new mongoose.Schema({
   password: {
     type: String,
     required: true,
+    select: false
   },
   role: {
     type: String,
@@ -34,7 +35,21 @@ const UserSchema = new mongoose.Schema({
     type: Boolean,
     default: true
   }
-}, { timestamps: true });
+}, { 
+  timestamps: true,
+  toJSON: {
+    transform(doc, ret) {
+      delete ret.password;
+      return ret;
+    }
+  },
+  toObject: {
+    transform(doc, ret) {
+      delete ret.password;
+      return ret;
+    }
+  }
+});
 
 // Password Encrypt karne ka logic (Aapka existing logic preserved)
 UserSchema.pre("save", async function (next) {

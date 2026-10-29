@@ -12,12 +12,20 @@ const teacherSalarySchema = new mongoose.Schema({
     },
     paymentType: {
         type: String,
-        enum: ['Full Salary', 'Partial Advance', 'Leave Deduction', 'Bonus'],
+        enum: ['Full Salary', 'Partial Advance', 'Leave Deduction', 'Bonus', 'Prorated Salary'],
         required: true
     },
     month: {
         type: String, // Stored as YYYY-MM
         required: true
+    },
+    attendanceDeduction: {
+        type: Number,
+        default: 0
+    },
+    effectiveAbsentDays: {
+        type: Number,
+        default: 0
     },
     paymentDate: {
         type: Date,

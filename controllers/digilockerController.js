@@ -1,4 +1,4 @@
-const DigiLockerDocument = require('../models/DigiLockerDocument');
+﻿const DigiLockerDocument = require('../models/DigiLockerDocument');
 const Student = require('../models/Student');
 const Teacher = require('../models/Teacher');
 const Class = require('../models/Class');
@@ -43,7 +43,7 @@ exports.getDocuments = async (req, res) => {
         const query = { isArchived: { $ne: true } };
 
         // If teacher is querying their own documents
-        if (req.user && (req.user.role === 'Teacher' || req.user.role === 'teacher') && !req.query.all) {
+        if (req.user && (req.user.role === 'Teacher' || req.user.role === 'teacher')) {
             query.ownerType = 'Teacher';
             if (req.user.email) {
                 query.$or = [

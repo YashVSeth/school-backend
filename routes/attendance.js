@@ -1,10 +1,10 @@
-const express = require('express');
+﻿const express = require('express');
 const router = express.Router();
 const Attendance = require('../models/Attendance');
 const TeacherAttendance = require('../models/TeacherAttendance'); // ✅ New Model
 const Student = require('../models/Student');
 const Class = require('../models/Class');
-const { protect } = require('../middleware/authMiddleware');
+const { protect, adminOnly } = require('../middleware/authMiddleware');
 
 // 1. GET MY STUDENTS (SMART VERSION)
 router.get('/my-students', protect, async (req, res) => {
@@ -196,7 +196,7 @@ router.get('/stats/bulk', protect, async (req, res) => {
 // ==========================================
 
 // 3. GET DAILY: Fetch all teacher attendance for a specific date (e.g. 2026-02-25)
-router.get('/teachers/daily', protect, async (req, res) => {
+router.get('/teachers/daily', protect, adminOnly, async (req, res) => {
   try {
     const { date } = req.query;
     if (!date) return res.status(400).json({ message: "Date is required" });
@@ -211,7 +211,7 @@ router.get('/teachers/daily', protect, async (req, res) => {
 });
 
 // 4. POST BULK: Save daily attendance for all teachers at once
-router.post('/teachers/bulk', protect, async (req, res) => {
+router.post('/teachers/bulk', protect, adminOnly, async (req, res) => {
   try {
     const { records } = req.body;
     // records is an array like: [{ teacherId: "xx", date: "YYYY-MM-DD", status: "Present" }, ...]
@@ -261,7 +261,7 @@ router.get('/teacher/:teacherId', protect, async (req, res) => {
 });
 
 // 6. POST INDIVIDUAL: Save or Update a single day's attendance for a single teacher
-router.post('/teacher', protect, async (req, res) => {
+router.post('/teacher', protect, adminOnly, async (req, res) => {
   try {
     const { teacherId, date, status } = req.body;
 

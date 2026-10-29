@@ -12,7 +12,7 @@ const teacherAttendanceSchema = new mongoose.Schema({
     },
     status: {
         type: String,
-        enum: ['Present', 'Absent', 'Late'],
+        enum: ['Present', 'Absent', 'Late', 'Half Day', 'On Leave'],
         default: 'Present'
     }
 }, { timestamps: true });

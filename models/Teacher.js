@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+﻿const mongoose = require('mongoose');
 
 const TeacherSchema = new mongoose.Schema({
     // Step 1: Basic Info
@@ -6,7 +6,7 @@ const TeacherSchema = new mongoose.Schema({
     fullName: { type: String, required: true },
     gender: { type: String },
     dob: { type: Date },
-    // ✅ Email hi ab primary identity hai
+    // Email is primary identity
     email: { type: String, required: true, unique: true },
     phone: { type: String },
     permanentAddress: { type: String },
@@ -25,22 +25,32 @@ const TeacherSchema = new mongoose.Schema({
     // Step 3: Credentials & Status
     resume: { type: String },
     idProof: { type: String },
-
-    // ⚠️ UPDATE: 'username' se 'unique: true' hata diya gaya hai 
-    // taaki ye login mein rukawat na bane.
     username: { type: String },
 
-    password: { type: String, required: true },
+    // Security: exclude password from default queries
+    password: { type: String, required: true, select: false },
     role: { type: String, default: 'Teacher' },
     status: { type: String, default: 'Active' },
 
     createdAt: { type: Date, default: Date.now }
+}, {
+    toJSON: {
+        transform(doc, ret) {
+            delete ret.password;
+            return ret;
+        }
+    },
+    toObject: {
+        transform(doc, ret) {
+            delete ret.password;
+            return ret;
+        }
+    }
 });
 
 const Teacher = mongoose.model('Teacher', TeacherSchema);
 
 // Automatically drop the old legacy unique index for 'username' if it exists in the database
-// This prevents E11000 duplicate key errors when adding new teachers without usernames
 Teacher.collection.dropIndex('username_1').catch(err => {
     // Index might not exist, which is fine
 });

@@ -1,6 +1,8 @@
-const express = require("express");
+﻿const express = require("express");
 const dotenv = require("dotenv");
 const cors = require("cors");
+const helmet = require("helmet");
+const rateLimit = require("express-rate-limit");
 const http = require("http");
 const https = require("https");
 const { Server } = require("socket.io");
@@ -14,14 +16,18 @@ connectDB();
 const app = express();
 const server = http.createServer(app);
 
-// ✅ Dynamic CORS origin handler (supports all local dev ports + production Vercel domains)
+// ✅ Secure CORS origin handler (supports local dev ports + exact school production domains)
 const isAllowedOrigin = (origin) => {
-  if (!origin) return true; // Allow mobile apps, curl, Postman
+  if (!origin) return true; // Allow mobile apps, curl, server-to-server
+  // Allow localhost & 127.0.0.1 on any port for local development
+  if (/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+    return true;
+  }
+  // Allow verified production frontend domains
   if (
-    origin.startsWith("http://localhost:") ||
-    origin.startsWith("http://127.0.0.1:") ||
-    origin.includes("vercel.app") ||
-    origin.includes("radhey-shyam-shakuntala-seth")
+    /^https:\/\/radhey-shyam-shakuntala-seth.*\.vercel\.app$/.test(origin) ||
+    (origin.endsWith(".vercel.app") && origin.includes("radhey-shyam")) ||
+    (process.env.CLIENT_URL && origin === process.env.CLIENT_URL)
   ) {
     return true;
   }
@@ -32,8 +38,11 @@ const isAllowedOrigin = (origin) => {
 const io = new Server(server, {
   cors: {
     origin: (origin, callback) => {
-      if (isAllowedOrigin(origin)) callback(null, true);
-      else callback(null, true); // Dev-friendly fallback
+      if (isAllowedOrigin(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("CORS policy violation: Socket origin not allowed."));
+      }
     },
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     credentials: true
@@ -43,16 +52,64 @@ const io = new Server(server, {
 // Share 'io' with routes/controllers
 app.set("socketio", io);
 
-// --- MIDDLEWARE ---
+// --- TRUST PROXY & HTTPS ENFORCEMENT ---
+app.set("trust proxy", 1);
+
+// Automatically redirect insecure HTTP requests to HTTPS in production
+app.use((req, res, next) => {
+  if (
+    process.env.NODE_ENV === "production" &&
+    req.headers["x-forwarded-proto"] &&
+    req.headers["x-forwarded-proto"] !== "https"
+  ) {
+    return res.redirect(301, `https://${req.headers.host}${req.url}`);
+  }
+  next();
+});
+
+// --- SECURITY MIDDLEWARE ---
+// 1. HTTP Security Headers
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" }
+}));
+
+// 2. Strict CORS
 app.use(cors({
   origin: (origin, callback) => {
-    if (isAllowedOrigin(origin)) callback(null, true);
-    else callback(null, true);
+    if (isAllowedOrigin(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error("CORS policy violation: HTTP origin not allowed."));
+    }
   },
   credentials: true
 }));
-app.use(express.json({ limit: "50mb" }));
-app.use(express.urlencoded({ extended: true, limit: "50mb" }));
+
+// 3. Rate Limiters (Defense against brute force & DoS)
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 600,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: "Too many requests, please try again later." }
+});
+app.use('/api', apiLimiter);
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20, // 20 attempts per 15 minutes
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: "Too many login attempts. Please try again after 15 minutes." }
+});
+app.use('/api/auth/login', authLimiter);
+app.use('/api/teachers/login', authLimiter);
+app.use('/api/auth/forgot-password', authLimiter);
+app.use('/api/auth/reset-password', authLimiter);
+
+// 4. Safe body size limits (prevents payload-based memory exhaustion)
+app.use(express.json({ limit: "2mb" }));
+app.use(express.urlencoded({ extended: true, limit: "2mb" }));
 
 // --- IMPORT ROUTES ---
 const authRoutes = require('./routes/authRoutes');

@@ -1,5 +1,6 @@
-const express = require('express');
+﻿const express = require('express');
 const router = express.Router();
+const { protect, adminOnly } = require('../middleware/authMiddleware');
 
 // ✅ Import the controller functions (ONLY ONCE)
 const { 
@@ -18,7 +19,7 @@ if (!registerUser || !loginUser || !forgotPassword || !resetPassword) {
 // --- DEFINE ROUTES ---
 
 // Register & Login
-router.post('/register', registerUser);
+router.post('/register', protect, adminOnly, registerUser);
 router.post('/login', loginUser);
 router.get('/verify-link/:token', verifyLinkAndNotify);
 // Password Reset

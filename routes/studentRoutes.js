@@ -1,7 +1,7 @@
-const express = require("express");
+﻿const express = require("express");
 const router = express.Router();
 const multer = require("multer");
-const { protect } = require("../middleware/authMiddleware");
+const { protect, adminOnly } = require("../middleware/authMiddleware");
 
 // Memory storage for Google Drive upload stream
 const upload = multer({
@@ -21,8 +21,8 @@ const {
 } = require("../controllers/studentController");
 
 // --- ROUTES ---
-router.post("/reassign-roll-numbers", protect, reassignAllRollNumbers);
-router.post("/bulk-import", protect, bulkImportStudents);
+router.post("/reassign-roll-numbers", protect, adminOnly, reassignAllRollNumbers);
+router.post("/bulk-import", protect, adminOnly, bulkImportStudents);
 router.get("/class/:classId", protect, async (req, res) => {
   try {
     const { classId } = req.params;
@@ -59,10 +59,10 @@ router.get("/class/:classId", protect, async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 });
-router.post("/", protect, upload.single('photo'), addStudent);
+router.post("/", protect, adminOnly, upload.single('photo'), addStudent);
 router.get("/", protect, getStudents);
 router.post("/attendance", protect, markAttendance); 
-router.delete("/:id", protect, deleteStudent);
-router.put("/:id", protect, upload.single('photo'), updateStudent);
+router.delete("/:id", protect, adminOnly, deleteStudent);
+router.put("/:id", protect, adminOnly, upload.single('photo'), updateStudent);
 
 module.exports = router;
